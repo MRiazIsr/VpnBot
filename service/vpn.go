@@ -101,9 +101,9 @@ func GenerateAndReload() error {
 	// 3. Собираем конфиг
 	cfg := SingBoxConfig{
 		Log: LogConfig{
-			Level:     "info", // info достаточно, debug слишком тяжелый для продакшена
+			Level:     "info",
 			Timestamp: true,
-			Output:    "access.log", // ВАЖНО: пишем логи в файл, чтобы бот мог считать трафик
+			Output:    "/etc/sing-box/access.log", // <--- ВАЖНО: Тот же самый абсолютный путь
 		},
 		Inbounds: []InboundConfig{
 			{
@@ -186,12 +186,16 @@ func GenerateLink(user database.User, settings database.SystemSettings, serverIP
 var logRegex = regexp.MustCompile(`inbound/vless-in\[(.*?)\]: connection closed.*downlink: (\d+).*uplink: (\d+)`)
 
 func UpdateTrafficStats() error {
-	logFile := "access.log"
-	tempFile := "access_log_processing.tmp"
+	// ИСПОЛЬЗУЕМ АБСОЛЮТНЫЕ ПУТИ
+	// Убедись, что путь совпадает с тем, что мы пропишем в конфиге ниже
+	logFile := "/etc/sing-box/access.log"
+	tempFile := "/etc/sing-box/access_log_processing.tmp"
 
 	// 1. Проверяем, существует ли файл логов
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		return nil // Файла нет, значит трафика еще не было
+		// Добавь этот лог, чтобы видеть в консоли, если файла реально нет
+		log.Println("Traffic log file not found at:", logFile)
+		return nil
 	}
 
 	// 2. Переименовываем файл (ротация), чтобы Sing-box начал писать в новый
