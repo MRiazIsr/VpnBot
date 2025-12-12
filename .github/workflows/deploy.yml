@@ -19,16 +19,28 @@ jobs:
           port: 22
           script: |
             # 1. Переходим в папку проекта
-            cd /opt/VpnBot
+            # Используем путь /opt/VpnBot, так как в логах видно, что репозиторий там
+            TARGET_DIR="/opt/VpnBot"
             
-            # 2. Обновляем код
-            # ВНИМАНИЕ: На сервере уже должен быть сделан git clone!
-            echo "📥 Pulling latest code..."
-            git pull origin main
+            mkdir -p $TARGET_DIR
+            cd $TARGET_DIR
+            
+            # 2. Логика обновления кода
+            if [ ! -d ".git" ]; then
+              echo "🚀 Repository not found. Cloning..."
+              # Клонируем в текущую директорию (.)
+              git clone git@github.com:MRiazIsr/VpnBot.git .
+            else
+              echo "📥 Pulling latest code..."
+              git pull origin main
+            fi
             
             # 3. Собираем бинарник
-            # Добавляем пути к Go (на случай установки через apt или вручную)
             export PATH=$PATH:/usr/local/go/bin:/usr/bin
+            
+            echo "📦 Updating dependencies (Fixing missing go.sum)..."
+            # ВАЖНО: Эта команда скачает недостающие библиотеки
+            go mod tidy
             
             echo "🔨 Building Go binary..."
             go build -o app_bin main.go
