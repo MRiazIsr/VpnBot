@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  workflow_dispatch: # Позволяет запускать вручную кнопку
 
 jobs:
   deploy:
@@ -22,12 +22,16 @@ jobs:
             cd /opt/vpnbot
             
             # 2. Обновляем код
+            # ВНИМАНИЕ: На сервере уже должен быть сделан git clone!
             echo "📥 Pulling latest code..."
             git pull origin main
             
-            # 3. Собираем бинарник (теперь в корне)
+            # 3. Собираем бинарник
+            # Добавляем пути к Go (на случай установки через apt или вручную)
+            export PATH=$PATH:/usr/local/go/bin:/usr/bin
+            
             echo "🔨 Building Go binary..."
-            /usr/local/go/bin/go build -o app_bin main.go
+            go build -o app_bin main.go
             
             # 4. Перезапускаем сервис
             echo "🔄 Restarting service..."
