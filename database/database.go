@@ -83,8 +83,8 @@ func Init(path string) {
 			RealityPublicKey: "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
 			RealityShortIDs:  `["207fc82a9f9e741f"]`,
 			// Используем www.google.com как в твоем текущем рабочем конфиге
-			ServerName: "www.google.com",
-			DestAddr:   "www.google.com:443",
+			ServerName: "www.max.ru",
+			DestAddr:   "www.max.ru:443",
 		})
 	}
 
