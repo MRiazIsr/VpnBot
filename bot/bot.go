@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"vpnbot/service"
 
 	"github.com/google/uuid"
+	"github.com/skip2/go-qrcode"
 	tele "gopkg.in/telebot.v3"
 )
 
@@ -53,7 +55,7 @@ func Start(token string, adminID int64) {
 		// Если не нашли по Telegram ID
 		if result.Error != nil {
 			var existingUser database.User
-			// Логика привязки админа (если это первый запуск)
+			// Логика привязки админа
 			if c.Sender().ID == AdminID || c.Sender().ID == 124343839 {
 				if err := database.DB.Where("username = 'MRiaz' AND telegram_id = 0").First(&existingUser).Error; err == nil {
 					existingUser.TelegramID = c.Sender().ID
@@ -80,7 +82,6 @@ func Start(token string, adminID int64) {
 		btnApprove := approveBtn.Data("✅ Одобрить", "approve", fmt.Sprintf("%d", c.Sender().ID))
 		approveBtn.Inline(approveBtn.Row(btnApprove))
 
-		// Отправляем админу
 		targetAdmin := AdminID
 		if targetAdmin == 0 {
 			targetAdmin = 124343839
@@ -111,17 +112,25 @@ func Start(token string, adminID int64) {
 
 	b.Handle(&tele.Btn{Unique: "conn_link"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
-		// Используем IP из кода
+		// IP адрес сервера
 		link := service.GenerateLink(user, settings, "49.13.201.110")
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
 	})
 
-	b.Handle(&tele.Btn{Unique: "conn_file"}, func(c tele.Context) error {
-		return c.Send("Генерация файла пока в разработке (для Sing-box используйте ссылку).")
-	})
-
+	// ИСПРАВЛЕНО: Реальная генерация QR кода
 	b.Handle(&tele.Btn{Unique: "conn_qr"}, func(c tele.Context) error {
-		return c.Send("Для QR кода используйте мобильное приложение и ссылку.")
+		user, settings := getUserAndSettings(c.Sender().ID)
+		link := service.GenerateLink(user, settings, "49.13.201.110")
+
+		// Генерируем QR код в память
+		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
+		if err != nil {
+			return c.Send("❌ Ошибка генерации QR кода.")
+		}
+
+		// Отправляем как фото
+		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "Сканируйте этот код в приложении v2rayNG или V2Box"}
+		return c.Send(photo)
 	})
 
 	b.Handle(&btnStatus, func(c tele.Context) error {
@@ -130,7 +139,6 @@ func Start(token string, adminID int64) {
 		return c.Send(msg)
 	})
 
-	// --- НОВАЯ КНОПКА ПОМОЩЬ ---
 	b.Handle(&btnHelp, func(c tele.Context) error {
 		helpMsg := `📖 **Инструкция по подключению:**
 
