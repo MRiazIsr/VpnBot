@@ -16,7 +16,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Секретный ключ для подписи JWT (в реальном проекте лучше тоже в ENV)
 var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
 
 func init() {
@@ -25,12 +24,10 @@ func init() {
 	}
 }
 
-// Структура для логина
 type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// Middleware для CORS
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -47,7 +44,6 @@ func CORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-// Middleware для проверки авторизации
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -74,16 +70,13 @@ func AuthMiddleware() gin.HandlerFunc {
 }
 
 func main() {
-	// 1. Инициализация БД
 	database.Init("vpn.db")
 
-	// 2. Генерация конфига при старте
 	err := service.GenerateAndReload()
 	if err != nil {
 		log.Println("Error generating initial config:", err)
 	}
 
-	// 3. Запуск Telegram бота
 	botToken := os.Getenv("BOT_TOKEN")
 	adminID := int64(124343839)
 
@@ -93,13 +86,11 @@ func main() {
 		log.Println("BOT_TOKEN not set, skipping bot start")
 	}
 
-	// 4. HTTP API Server
 	r := gin.Default()
 	r.Use(CORSMiddleware())
 
 	api := r.Group("/api")
 	{
-		// Публичный роут для логина
 		api.POST("/login", func(c *gin.Context) {
 			var loginReq LoginRequest
 			if err := c.ShouldBindJSON(&loginReq); err != nil {
@@ -109,7 +100,6 @@ func main() {
 
 			adminPassword := os.Getenv("ADMIN_PASSWORD")
 			if adminPassword == "" {
-				// Если пароль не задан, логин невозможен (безопасность)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Server admin password not configured"})
 				return
 			}
@@ -119,10 +109,9 @@ func main() {
 				return
 			}
 
-			// Генерация токена
 			token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 				"admin": true,
-				"exp":   time.Now().Add(time.Hour * 24).Unix(), // Токен на 24 часа
+				"exp":   time.Now().Add(time.Hour * 24).Unix(),
 			})
 
 			tokenString, err := token.SignedString(jwtSecret)
@@ -134,18 +123,15 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"token": tokenString})
 		})
 
-		// Защищенные роуты
 		authorized := api.Group("/")
 		authorized.Use(AuthMiddleware())
 		{
-			// Получить всех пользователей
 			authorized.GET("/users", func(c *gin.Context) {
 				var users []database.User
 				database.DB.Find(&users)
 				c.JSON(200, users)
 			})
 
-			// Банить/Разбанивать пользователя
 			authorized.PUT("/users/:id/status", func(c *gin.Context) {
 				idStr := c.Param("id")
 				id, err := strconv.Atoi(idStr)
@@ -175,9 +161,48 @@ func main() {
 				c.JSON(200, user)
 			})
 
-			// --- НОВЫЙ РОУТ: Синхронизация имен пользователей из Telegram ---
+			// --- НОВЫЙ МЕТОД: Обновление лимита ---
+			authorized.PUT("/users/:id/limit", func(c *gin.Context) {
+				idStr := c.Param("id")
+				id, err := strconv.Atoi(idStr)
+				if err != nil {
+					c.JSON(400, gin.H{"error": "Invalid ID"})
+					return
+				}
+
+				var user database.User
+				if err := database.DB.First(&user, id).Error; err != nil {
+					c.JSON(404, gin.H{"error": "User not found"})
+					return
+				}
+
+				var input struct {
+					Limit int64 `json:"limit"` // Лимит в байтах
+				}
+				if err := c.ShouldBindJSON(&input); err != nil {
+					c.JSON(400, gin.H{"error": "Invalid input"})
+					return
+				}
+
+				// Обновляем лимит
+				user.TrafficLimit = input.Limit
+
+				// Умная логика: если юзер был expired, но новый лимит позволяет работать — активируем
+				// (0 = безлимит, либо новый лимит > использованного)
+				if user.Status == "expired" {
+					if user.TrafficLimit == 0 || user.TrafficUsed < user.TrafficLimit {
+						user.Status = "active"
+						// Так как статус изменился, нужно перезагрузить конфиг VLESS
+						service.GenerateAndReload()
+					}
+				}
+
+				database.DB.Save(&user)
+				c.JSON(200, user)
+			})
+			// -------------------------------------
+
 			authorized.POST("/users/sync", func(c *gin.Context) {
-				// Проверяем, инициализирован ли бот
 				if bot.Bot == nil {
 					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Bot is not initialized"})
 					return
@@ -188,25 +213,17 @@ func main() {
 
 				updatedCount := 0
 				for _, u := range users {
-					// Пропускаем админов без ID или тех, у кого ID = 0
 					if u.TelegramID == 0 {
 						continue
 					}
-
-					// Запрашиваем информацию о чате по ID
 					chat, err := bot.Bot.ChatByID(u.TelegramID)
 					if err == nil {
 						realUsername := chat.Username
-
-						// Если есть реальное имя и оно отличается от сохраненного — обновляем
 						if realUsername != "" && u.TelegramUsername != realUsername {
 							u.TelegramUsername = realUsername
 							database.DB.Save(&u)
 							updatedCount++
 						}
-					} else {
-						// Логируем ошибку, но не прерываем процесс
-						log.Printf("Sync error for user ID %d: %v", u.TelegramID, err)
 					}
 				}
 
@@ -216,11 +233,9 @@ func main() {
 					"message":       fmt.Sprintf("Successfully synced %d users", updatedCount),
 				})
 			})
-			// ----------------------------------------------------------------
 		}
 	}
 
-	// Subscription URL (публичный, без токена)
 	r.GET("/sub/:token", func(c *gin.Context) {
 		token := c.Param("token")
 		var user database.User
