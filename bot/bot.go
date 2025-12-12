@@ -15,6 +15,9 @@ import (
 
 var AdminID int64 = 0
 
+// Делаем переменную Bot глобальной, чтобы main.go мог к ней обращаться
+var Bot *tele.Bot
+
 func Start(token string, adminID int64) {
 	AdminID = adminID
 	pref := tele.Settings{
@@ -27,6 +30,9 @@ func Start(token string, adminID int64) {
 		log.Fatal(err)
 		return
 	}
+
+	// Сохраняем экземпляр бота в глобальную переменную
+	Bot = b
 
 	// --- Menus ---
 
@@ -243,7 +249,7 @@ func Start(token string, adminID int64) {
 
 func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
 	// 1. ВАЖНО: Сначала читаем статистику через API
-	service.UpdateTrafficViaAPI() // Исправленный вызов!
+	service.UpdateTrafficViaAPI()
 
 	// 2. Получаем данные текущего пользователя
 	user, _ := getUserAndSettings(tgID)

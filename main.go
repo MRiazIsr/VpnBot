@@ -174,6 +174,49 @@ func main() {
 
 				c.JSON(200, user)
 			})
+
+			// --- НОВЫЙ РОУТ: Синхронизация имен пользователей из Telegram ---
+			authorized.POST("/users/sync", func(c *gin.Context) {
+				// Проверяем, инициализирован ли бот
+				if bot.Bot == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Bot is not initialized"})
+					return
+				}
+
+				var users []database.User
+				database.DB.Find(&users)
+
+				updatedCount := 0
+				for _, u := range users {
+					// Пропускаем админов без ID или тех, у кого ID = 0
+					if u.TelegramID == 0 {
+						continue
+					}
+
+					// Запрашиваем информацию о чате по ID
+					chat, err := bot.Bot.ChatByID(u.TelegramID)
+					if err == nil {
+						realUsername := chat.Username
+
+						// Если есть реальное имя и оно отличается от сохраненного — обновляем
+						if realUsername != "" && u.TelegramUsername != realUsername {
+							u.TelegramUsername = realUsername
+							database.DB.Save(&u)
+							updatedCount++
+						}
+					} else {
+						// Логируем ошибку, но не прерываем процесс
+						log.Printf("Sync error for user ID %d: %v", u.TelegramID, err)
+					}
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"status":        "success",
+					"updated_users": updatedCount,
+					"message":       fmt.Sprintf("Successfully synced %d users", updatedCount),
+				})
+			})
+			// ----------------------------------------------------------------
 		}
 	}
 
