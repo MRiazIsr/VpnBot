@@ -29,13 +29,21 @@ func Start(token string, adminID int64) {
 	}
 
 	// --- Menus ---
+
+	// Главное меню (для зарегистрированных)
 	menu := &tele.ReplyMarkup{ResizeKeyboard: true}
 	btnStatus := menu.Text("📊 Статус")
 	btnConnect := menu.Text("🔑 Подключиться")
 	btnHelp := menu.Text("🆘 Помощь")
 	menu.Reply(menu.Row(btnStatus, btnConnect), menu.Row(btnHelp))
 
-	// Кнопки формата подключения
+	// Гостевое меню (для новых пользователей)
+	guestMenu := &tele.ReplyMarkup{ResizeKeyboard: true}
+	btnRequest := guestMenu.Text("📝 Подать заявку")
+	btnCheck := guestMenu.Text("🔄 Проверить статус")
+	guestMenu.Reply(guestMenu.Row(btnRequest), guestMenu.Row(btnCheck))
+
+	// Кнопки формата подключения (Inline)
 	connectMenu := &tele.ReplyMarkup{}
 	btnLink := connectMenu.Data("🔗 Ссылка", "conn_link")
 	btnFile := connectMenu.Data("📁 Файл конфига", "conn_file")
@@ -47,35 +55,46 @@ func Start(token string, adminID int64) {
 
 	// --- Handlers ---
 
-	b.Handle("/start", func(c tele.Context) error {
+	// Функция проверки статуса (используется в /start и кнопке "Проверить статус")
+	checkStatus := func(c tele.Context) error {
 		var user database.User
 		// Ищем по TelegramID
 		result := database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user)
 
-		// Если не нашли по Telegram ID
+		// Если не нашли пользователя
 		if result.Error != nil {
 			var existingUser database.User
-			// Логика привязки админа
+			// Логика авто-привязки админа
 			if c.Sender().ID == AdminID || c.Sender().ID == 124343839 {
 				if err := database.DB.Where("username = 'MRiaz' AND telegram_id = 0").First(&existingUser).Error; err == nil {
 					existingUser.TelegramID = c.Sender().ID
 					database.DB.Save(&existingUser)
-					return c.Send("Ваш профиль администратора (MRiaz) успешно привязан!", menu)
+					return c.Send("✅ Ваш профиль администратора успешно привязан!", menu)
 				}
 			}
 
-			return c.Send("Вы не зарегистрированы. Нажмите /request для заявки.")
+			// Показываем гостевое меню
+			return c.Send("👋 Вы не зарегистрированы в системе.\n\nНажмите **📝 Подать заявку**, чтобы запросить доступ.", guestMenu)
 		}
 
 		if user.Status == "banned" {
 			return c.Send("⛔ Ваш доступ заблокирован.")
 		}
 
-		return c.Send("Меню управления VPN", menu)
-	})
+		return c.Send("✅ Выберите действие:", menu)
+	}
 
-	// Заявка на доступ
-	b.Handle("/request", func(c tele.Context) error {
+	b.Handle("/start", checkStatus)
+	b.Handle(&btnCheck, checkStatus)
+
+	// Обработка заявки (команда и кнопка)
+	handleRequest := func(c tele.Context) error {
+		// Проверяем, может пользователь уже есть?
+		var user database.User
+		if database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user).Error == nil {
+			return c.Send("✅ У вас уже есть доступ!", menu)
+		}
+
 		msg := fmt.Sprintf("🔔 **Новая заявка!**\nUser: @%s (%d)", c.Sender().Username, c.Sender().ID)
 
 		approveBtn := &tele.ReplyMarkup{}
@@ -86,12 +105,30 @@ func Start(token string, adminID int64) {
 		if targetAdmin == 0 {
 			targetAdmin = 124343839
 		}
-		b.Send(&tele.User{ID: targetAdmin}, msg, approveBtn)
-		return c.Send("Заявка отправлена администратору.")
-	})
 
+		// Отправляем админу
+		_, err := b.Send(&tele.User{ID: targetAdmin}, msg, approveBtn)
+		if err != nil {
+			log.Println("Ошибка отправки админу:", err)
+			return c.Send("❌ Ошибка отправки заявки (не настроен админ).")
+		}
+
+		return c.Send("⏳ Заявка отправлена администратору.\nОжидайте уведомления или нажмите **Проверить статус** позже.", guestMenu)
+	}
+
+	b.Handle("/request", handleRequest)
+	b.Handle(&btnRequest, handleRequest)
+
+	// Админ нажимает "Одобрить"
 	b.Handle(&tele.Btn{Unique: "approve"}, func(c tele.Context) error {
 		targetID := c.Data()
+
+		// Проверяем, не создан ли уже
+		var exists database.User
+		if database.DB.Where("telegram_id = ?", targetID).First(&exists).Error == nil {
+			return c.Edit("⚠️ Этот пользователь уже добавлен.")
+		}
+
 		newUser := database.User{
 			UUID:              uuid.New().String(),
 			Username:          fmt.Sprintf("user_%s", targetID),
@@ -102,7 +139,12 @@ func Start(token string, adminID int64) {
 		}
 		database.DB.Create(&newUser)
 		service.GenerateAndReload()
-		return c.Edit("✅ Пользователь создан.")
+
+		// Уведомляем пользователя лично!
+		userChat := &tele.User{ID: parseInt(targetID)}
+		b.Send(userChat, "🎉 **Поздравляем! Ваш доступ одобрен.**\n\nТеперь вы можете пользоваться VPN. Нажмите кнопку ниже, чтобы подключиться.", menu)
+
+		return c.Edit(fmt.Sprintf("✅ Пользователь %s одобрен и уведомлен.", targetID))
 	})
 
 	// --- Логика кнопки "Подключиться" ---
@@ -112,33 +154,46 @@ func Start(token string, adminID int64) {
 
 	b.Handle(&tele.Btn{Unique: "conn_link"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
-		// IP адрес сервера
 		link := service.GenerateLink(user, settings, "49.13.201.110")
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
+	})
+
+	b.Handle(&tele.Btn{Unique: "conn_file"}, func(c tele.Context) error {
+		return c.Send("📂 **Файл конфигурации**\n\nРекомендуется использовать **Ссылку** (кнопка выше) или QR-код.\nСсылка позволяет автоматически обновлять настройки при изменениях на сервере, а файл — нет.\n\nПросто скопируйте ссылку и вставьте её в приложение.", tele.ModeMarkdown)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_qr"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
 		link := service.GenerateLink(user, settings, "49.13.201.110")
 
-		// Генерируем QR код в память
 		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
 		if err != nil {
 			return c.Send("❌ Ошибка генерации QR кода.")
 		}
 
-		// Отправляем как фото
 		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "Сканируйте этот код в приложении Hiddify"}
 		return c.Send(photo)
 	})
 
+	// ИСПРАВЛЕНО: Красивое отображение трафика (MB/GB)
 	b.Handle(&btnStatus, func(c tele.Context) error {
 		user, _ := getUserAndSettings(c.Sender().ID)
-		msg := fmt.Sprintf("📊 Трафик: %d / %d", user.TrafficUsed, user.TrafficLimit)
-		return c.Send(msg)
+
+		used := formatBytes(user.TrafficUsed)
+		limit := formatBytes(user.TrafficLimit)
+
+		// Если лимит 0 - значит безлимит (или не установлен)
+		limitStr := limit
+		if user.TrafficLimit == 0 {
+			limitStr = "∞ (Безлимит)"
+		}
+
+		msg := fmt.Sprintf("📊 **Ваш статус**\n\n👤 Пользователь: `%s`\n📉 Потрачено: **%s**\n📈 Лимит: **%s**",
+			user.Username, used, limitStr)
+
+		return c.Send(msg, tele.ModeMarkdown)
 	})
 
-	// --- ОБНОВЛЕННАЯ КНОПКА ПОМОЩЬ (Hiddify) ---
 	b.Handle(&btnHelp, func(c tele.Context) error {
 		helpMsg := `📖 **Инструкция по подключению:**
 
@@ -186,4 +241,18 @@ func parseInt(s string) int64 {
 	var i int64
 	fmt.Sscanf(s, "%d", &i)
 	return i
+}
+
+// Вспомогательная функция для форматирования байт
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }

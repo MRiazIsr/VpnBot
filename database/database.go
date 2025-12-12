@@ -76,15 +76,12 @@ func Init(path string) {
 	if result := DB.First(&settings); result.Error != nil {
 		log.Println("Settings not found, initializing from config...")
 		DB.Create(&SystemSettings{
-			ListenPort: 443,
-			// ТВОЙ ПРИВАТНЫЙ КЛЮЧ
+			ListenPort:        443,
 			RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
-			// Публичный ключ из твоего клиентского конфига
-			RealityPublicKey: "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
-			RealityShortIDs:  `["207fc82a9f9e741f"]`,
-			// Используем www.google.com как в твоем текущем рабочем конфиге
-			ServerName: "www.max.ru",
-			DestAddr:   "www.max.ru:443",
+			RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
+			RealityShortIDs:   `["207fc82a9f9e741f"]`,
+			ServerName:        "www.max.ru",
+			DestAddr:          "www.max.ru:443",
 		})
 	}
 
