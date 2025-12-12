@@ -1,0 +1,37 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USERNAME }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          port: 22
+          script: |
+            # 1. Переходим в папку проекта
+            cd /opt/vpnbot
+            
+            # 2. Обновляем код
+            echo "📥 Pulling latest code..."
+            git pull origin main
+            
+            # 3. Собираем бинарник (теперь в корне)
+            echo "🔨 Building Go binary..."
+            /usr/local/go/bin/go build -o app_bin main.go
+            
+            # 4. Перезапускаем сервис
+            echo "🔄 Restarting service..."
+            systemctl restart vpnbot
+            
+            # 5. Проверка статуса
+            systemctl status vpnbot --no-pager
