@@ -161,32 +161,6 @@ func Start(token string, adminID int64) {
 		return c.Send(photo)
 	})
 
-	// Общая функция формирования сообщения статуса
-	getStatusMsg := func(tgID int64) (string, *tele.ReplyMarkup) {
-		// ВАЖНО: Принудительное обновление статистики ПЕРЕД показом
-		// Если функция UpdateTrafficStats существует в service, она опросит Xray
-		// Если её нет, эту строку нужно закомментировать, пока не реализуете service
-		// service.UpdateTrafficStats()
-
-		user, _ := getUserAndSettings(tgID)
-		used := formatBytes(user.TrafficUsed)
-		limit := formatBytes(user.TrafficLimit)
-
-		limitStr := limit
-		if user.TrafficLimit == 0 {
-			limitStr = "∞ (Безлимит)"
-		}
-
-		msg := fmt.Sprintf("📊 **Ваш статус**\n\n👤 Пользователь: `%s`\n📉 Потрачено: **%s**\n📈 Лимит: **%s**",
-			user.Username, used, limitStr)
-
-		rm := &tele.ReplyMarkup{}
-		btnRefresh := rm.Data("🔄 Обновить", "status_refresh")
-		rm.Inline(rm.Row(btnRefresh))
-
-		return msg, rm
-	}
-
 	b.Handle(&btnStatus, func(c tele.Context) error {
 		// Тут можно вызвать обновление
 		// service.UpdateTrafficStats()
@@ -242,6 +216,41 @@ func Start(token string, adminID int64) {
 	}()
 
 	b.Start()
+}
+func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
+	// 1. ВАЖНО: Сначала читаем логи и обновляем цифры в базе!
+	// Если этой строки нет, ты увидишь старые данные.
+	service.UpdateTrafficStats()
+
+	// 2. Получаем данные текущего пользователя (теперь они свежие)
+	user, _ := getUserAndSettings(tgID)
+	used := formatBytes(user.TrafficUsed)
+	limit := formatBytes(user.TrafficLimit)
+
+	limitStr := limit
+	if user.TrafficLimit == 0 {
+		limitStr = "∞ (Безлимит)"
+	}
+
+	// 3. Считаем ОБЩЕЕ количество пользователей
+	var totalUsers int64
+	database.DB.Model(&database.User{}).Where("status = ?", "active").Count(&totalUsers)
+
+	// 4. Формируем сообщение
+	msg := fmt.Sprintf(
+		"📊 **Статус сервера**\n"+
+			"👥 Активных пользователей: **%d**\n\n"+
+			"👤 **Ваш профиль:** `%s`\n"+
+			"📉 Потрачено: **%s**\n"+
+			"📈 Лимит: **%s**",
+		totalUsers, user.Username, used, limitStr,
+	)
+
+	rm := &tele.ReplyMarkup{}
+	btnRefresh := rm.Data("🔄 Обновить", "status_refresh")
+	rm.Inline(rm.Row(btnRefresh))
+
+	return msg, rm
 }
 
 func getUserAndSettings(tgID int64) (database.User, database.SystemSettings) {

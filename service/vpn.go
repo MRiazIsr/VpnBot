@@ -1,13 +1,18 @@
 package service
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"vpnbot/database"
+
+	"gorm.io/gorm"
 )
 
 const ConfigPath = "/etc/sing-box/config.json"
@@ -174,4 +179,104 @@ func GenerateLink(user database.User, settings database.SystemSettings, serverIP
 
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 		user.UUID, serverIP, settings.ListenPort, v.Encode(), url.QueryEscape(user.Username))
+}
+
+// Регулярное выражение для парсинга логов Sing-box
+// Ищет строки вида: inbound/vless-in[username] ... downlink: 1234, uplink: 5678
+var logRegex = regexp.MustCompile(`inbound/vless-in\[(.*?)\]: connection closed.*downlink: (\d+).*uplink: (\d+)`)
+
+func UpdateTrafficStats() error {
+	logFile := "access.log"
+	tempFile := "access_log_processing.tmp"
+
+	// 1. Проверяем, существует ли файл логов
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		return nil // Файла нет, значит трафика еще не было
+	}
+
+	// 2. Переименовываем файл (ротация), чтобы Sing-box начал писать в новый
+	err := os.Rename(logFile, tempFile)
+	if err != nil {
+		log.Println("Error renaming log file:", err)
+		return err
+	}
+
+	// 3. Перезагружаем Sing-box, чтобы он пересоздал access.log
+	// Важно: используем kill -HUP или reload, чтобы он закрыл старый дескриптор
+	if err := ReloadService(); err != nil {
+		log.Println("Error reloading service during log rotation:", err)
+		// Если не удалось перезагрузить, лучше вернуть файл обратно, чтобы не терять логи (опционально)
+	}
+
+	// 4. Читаем временный файл
+	file, err := os.Open(tempFile)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	defer os.Remove(tempFile) // Удаляем файл после обработки
+
+	// Карта для накопления трафика за этот проход: map[username]Traffic
+	type trafficDelta struct {
+		Down int64
+		Up   int64
+	}
+	stats := make(map[string]trafficDelta)
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Пример строки лога:
+		// ... inbound/vless-in[user1]: connection closed ... downlink: 100, uplink: 200
+		matches := logRegex.FindStringSubmatch(line)
+		if len(matches) == 4 {
+			username := matches[1]
+			down, _ := strconv.ParseInt(matches[2], 10, 64)
+			up, _ := strconv.ParseInt(matches[3], 10, 64)
+
+			current := stats[username]
+			current.Down += down
+			current.Up += up
+			stats[username] = current
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Println("Error scanning log file:", err)
+	}
+
+	// 5. Записываем накопленные данные в БД
+	for username, traffic := range stats {
+		totalBytes := traffic.Down + traffic.Up
+
+		// Используем SQL update для атомарности (traffic_used = traffic_used + new_bytes)
+		// Это безопаснее, чем читать-изменять-сохранять
+		err := database.DB.Model(&database.User{}).
+			Where("username = ?", username).
+			Update("traffic_used", gorm.Expr("traffic_used + ?", totalBytes)).Error
+
+		if err != nil {
+			log.Printf("Failed to update traffic for user %s: %v", username, err)
+		} else {
+			// Опционально: проверка лимитов
+			checkLimits(username)
+		}
+	}
+
+	return nil
+}
+
+// Вспомогательная функция для проверки лимитов (можно расширить позже)
+func checkLimits(username string) {
+	var user database.User
+	if err := database.DB.Where("username = ?", username).First(&user).Error; err == nil {
+		if user.TrafficLimit > 0 && user.TrafficUsed >= user.TrafficLimit {
+			if user.Status == "active" {
+				database.DB.Model(&user).Update("status", "expired")
+				log.Printf("User %s expired due to traffic limit", username)
+				// Тут можно вызвать GenerateAndReload(), чтобы отключить юзера немедленно
+			}
+		}
+	}
 }
