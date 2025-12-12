@@ -85,7 +85,17 @@ func Start(token string, adminID int64) {
 			return c.Send("✅ У вас уже есть доступ!", menu)
 		}
 
-		msg := fmt.Sprintf("🔔 **Новая заявка!**\nUser: @%s (%d)", c.Sender().Username, c.Sender().ID)
+		// --- ИСПРАВЛЕНИЕ: Красивое имя пользователя ---
+		userLink := c.Sender().Username
+		if userLink == "" {
+			// Если нет юзернейма, берем Имя и делаем кликабельную ссылку на ID
+			userLink = fmt.Sprintf("[%s](tg://user?id=%d)", c.Sender().FirstName, c.Sender().ID)
+		} else {
+			userLink = "@" + userLink
+		}
+
+		msg := fmt.Sprintf("🔔 **Новая заявка!**\nUser: %s\nID: `%d`", userLink, c.Sender().ID)
+		// ----------------------------------------------
 
 		approveBtn := &tele.ReplyMarkup{}
 		btnApprove := approveBtn.Data("✅ Одобрить", "approve", fmt.Sprintf("%d", c.Sender().ID))
@@ -96,7 +106,7 @@ func Start(token string, adminID int64) {
 			targetAdmin = 124343839
 		}
 
-		_, err := b.Send(&tele.User{ID: targetAdmin}, msg, approveBtn)
+		_, err := b.Send(&tele.User{ID: targetAdmin}, msg, approveBtn, tele.ModeMarkdown)
 		if err != nil {
 			log.Println("Ошибка отправки админу:", err)
 			return c.Send("❌ Ошибка отправки заявки (не настроен админ).")
