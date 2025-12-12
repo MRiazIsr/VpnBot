@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"gorm.io/gorm"
 
-	// Импортируем типы для V2Ray API (gRPC)
 	"github.com/v2fly/v2ray-core/v4/app/stats/command"
 )
 
@@ -32,7 +31,6 @@ type SingBoxConfig struct {
 	Outbounds    []OutboundConfig    `json:"outbounds"`
 }
 
-// Конфигурация V2Ray API (вместо Clash API)
 type ExperimentalConfig struct {
 	V2RayAPI V2RayAPIConfig `json:"v2ray_api"`
 }
@@ -45,7 +43,7 @@ type V2RayAPIConfig struct {
 type StatsConfig struct {
 	Enabled  bool     `json:"enabled"`
 	Inbounds []string `json:"inbounds"`
-	Users    []string `json:"users"` // Список юзеров для отслеживания
+	Users    []string `json:"users"`
 }
 
 type LogConfig struct {
@@ -103,7 +101,7 @@ func GenerateAndReload() error {
 	database.DB.First(&settings)
 
 	vlessUsers := []VLessUser{}
-	userNames := []string{} // Список имен для статистики
+	userNames := []string{}
 
 	for _, u := range users {
 		vlessUsers = append(vlessUsers, VLessUser{
@@ -111,7 +109,6 @@ func GenerateAndReload() error {
 			UUID: u.UUID,
 			Flow: "xtls-rprx-vision",
 		})
-		// Собираем имена, чтобы Sing-box знал, кого считать
 		userNames = append(userNames, u.Username)
 	}
 
@@ -126,14 +123,13 @@ func GenerateAndReload() error {
 			Timestamp: true,
 			Output:    "/etc/sing-box/access.log",
 		},
-		// Включаем V2Ray API (gRPC)
 		Experimental: &ExperimentalConfig{
 			V2RayAPI: V2RayAPIConfig{
-				Listen: ApiAddr, // 127.0.0.1:10000
+				Listen: ApiAddr,
 				Stats: StatsConfig{
 					Enabled:  true,
 					Inbounds: []string{"vless-in"},
-					Users:    userNames, // <--- ВАЖНО: передаем список юзеров
+					Users:    userNames,
 				},
 			},
 		},
@@ -210,14 +206,11 @@ func GenerateLink(user database.User, settings database.SystemSettings, serverIP
 
 // --- API Traffic Logic (gRPC V2Ray) ---
 
-// Храним последнее значение счетчика (Absolute value), чтобы считать разницу
 var previousStats = make(map[string]int64)
 
 func UpdateTrafficViaAPI() error {
-	// Подключаемся к gRPC серверу Sing-box
 	conn, err := grpc.Dial(ApiAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		// Sing-box выключен
 		return nil
 	}
 	defer conn.Close()
@@ -226,40 +219,43 @@ func UpdateTrafficViaAPI() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	// Запрашиваем статистику по всем юзерам (pattern: "user>>>")
-	// Reset_: false, чтобы не сбрасывать счетчики в sing-box (мы сами считаем дельту)
+	// Запрашиваем всё, но фильтруем в коде
 	resp, err := client.QueryStats(ctx, &command.QueryStatsRequest{
-		Pattern: "user>>>",
+		Pattern: "",
 		Reset_:  false,
 	})
 	if err != nil {
 		return err
 	}
 
-	// Карта для накопления дельты за этот проход
 	userTrafficDelta := make(map[string]int64)
 	currentStats := make(map[string]int64)
 
 	for _, stat := range resp.Stat {
-		// Name format: "user>>>username>>>traffic>>>downlink"
+		// Формат имени: "type>>>name>>>metric>>>dimension"
+		// Примеры:
+		// "user>>>MRiaz>>>traffic>>>downlink" (Нам нужно это)
+		// "inbound>>>vless-in>>>traffic>>>downlink" (Это вызывает ошибку!)
+
 		parts := strings.Split(stat.Name, ">>>")
 		if len(parts) < 4 {
 			continue
 		}
-		username := parts[1]
-		direction := parts[3] // downlink or uplink
 
-		// Сохраняем текущее абсолютное значение
-		// Ключ: "MRiaz_downlink"
+		// Фильтр: обрабатываем только статистику пользователей
+		if parts[0] != "user" {
+			continue
+		}
+
+		username := parts[1]
+		direction := parts[3]
+
 		key := fmt.Sprintf("%s_%s", username, direction)
 		currentStats[key] = stat.Value
 
-		// Считаем разницу с предыдущим замером
 		prev := previousStats[key]
 		delta := stat.Value - prev
 
-		// Если Sing-box перезагрузился, stat.Value будет меньше prev (сброс)
-		// В этом случае delta = stat.Value (считаем с нуля)
 		if delta < 0 {
 			delta = stat.Value
 		}
@@ -269,20 +265,28 @@ func UpdateTrafficViaAPI() error {
 		}
 	}
 
-	// Обновляем "предыдущие" значения
 	for k, v := range currentStats {
 		previousStats[k] = v
 	}
 
-	// Пишем в БД
 	for username, newBytes := range userTrafficDelta {
 		if newBytes > 0 {
-			err := database.DB.Model(&database.User{}).
-				Where("username = ?", username).
-				Update("traffic_used", gorm.Expr("traffic_used + ?", newBytes)).Error
+			// Используем Transaction для надежности
+			err := database.DB.Transaction(func(tx *gorm.DB) error {
+				// Проверяем, существует ли юзер, чтобы избежать ошибки "record not found"
+				var count int64
+				tx.Model(&database.User{}).Where("username = ?", username).Count(&count)
+				if count == 0 {
+					return nil // Пропускаем несуществующих (на всякий случай)
+				}
+
+				return tx.Model(&database.User{}).
+					Where("username = ?", username).
+					Update("traffic_used", gorm.Expr("traffic_used + ?", newBytes)).Error
+			})
 
 			if err != nil {
-				log.Printf("DB Error: %v", err)
+				log.Printf("DB Error for %s: %v", username, err)
 			} else {
 				checkLimits(username)
 			}
