@@ -85,17 +85,15 @@ func Start(token string, adminID int64) {
 			return c.Send("✅ У вас уже есть доступ!", menu)
 		}
 
-		// --- ИСПРАВЛЕНИЕ: Красивое имя пользователя ---
+		// Красивое имя пользователя в уведомлении админу
 		userLink := c.Sender().Username
 		if userLink == "" {
-			// Если нет юзернейма, берем Имя и делаем кликабельную ссылку на ID
 			userLink = fmt.Sprintf("[%s](tg://user?id=%d)", c.Sender().FirstName, c.Sender().ID)
 		} else {
 			userLink = "@" + userLink
 		}
 
 		msg := fmt.Sprintf("🔔 **Новая заявка!**\nUser: %s\nID: `%d`", userLink, c.Sender().ID)
-		// ----------------------------------------------
 
 		approveBtn := &tele.ReplyMarkup{}
 		btnApprove := approveBtn.Data("✅ Одобрить", "approve", fmt.Sprintf("%d", c.Sender().ID))
@@ -119,28 +117,44 @@ func Start(token string, adminID int64) {
 	b.Handle(&btnRequest, handleRequest)
 
 	b.Handle(&tele.Btn{Unique: "approve"}, func(c tele.Context) error {
-		targetID := c.Data()
+		targetIDStr := c.Data()
+		targetID := parseInt(targetIDStr)
 
 		var exists database.User
 		if database.DB.Where("telegram_id = ?", targetID).First(&exists).Error == nil {
 			return c.Edit("⚠️ Этот пользователь уже добавлен.")
 		}
 
+		// --- НОВАЯ ЛОГИКА ---
+		// 1. Техническое имя (для VLESS конфига) всегда user_ID
+		vlessUsername := fmt.Sprintf("user_%d", targetID)
+
+		// 2. Пытаемся узнать реальный юзернейм для админки
+		tgUsername := ""
+		chat, err := b.ChatByID(targetID)
+		if err == nil && chat.Username != "" {
+			tgUsername = chat.Username
+		}
+		// --------------------
+
 		newUser := database.User{
 			UUID:              uuid.New().String(),
-			Username:          fmt.Sprintf("user_%s", targetID),
-			TelegramID:        parseInt(targetID),
+			Username:          vlessUsername, // user_123456
+			TelegramUsername:  tgUsername,    // @realname
+			TelegramID:        targetID,
 			Status:            "active",
 			TrafficLimit:      30 * 1024 * 1024 * 1024,
 			SubscriptionToken: database.GenerateToken(),
 		}
+
 		database.DB.Create(&newUser)
+
 		service.GenerateAndReload()
 
-		userChat := &tele.User{ID: parseInt(targetID)}
+		userChat := &tele.User{ID: targetID}
 		b.Send(userChat, "🎉 **Поздравляем! Ваш доступ одобрен.**\n\nТеперь вы можете пользоваться VPN. Нажмите кнопку ниже, чтобы подключиться.", menu)
 
-		return c.Edit(fmt.Sprintf("✅ Пользователь %s одобрен и уведомлен.", targetID))
+		return c.Edit(fmt.Sprintf("✅ Пользователь %s (%s) одобрен.", vlessUsername, tgUsername))
 	})
 
 	b.Handle(&btnConnect, func(c tele.Context) error {
@@ -205,7 +219,7 @@ func Start(token string, adminID int64) {
 1. Скачайте **V2Box** или **Streisand** в AppStore.
 2. Скопируйте ссылку в боте.
 3. Откройте приложение — оно само предложит добавить конфиг.
-4. Если нет: Configs -> "+" -> Add Subscription URL.
+4. Если нет: Configs -> "+" -> Import v2ray uri from clipboard.
 
 ❓ Если возникли проблемы, пишите администратору.`
 

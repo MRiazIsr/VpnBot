@@ -19,9 +19,10 @@ type User struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	UUID       string `gorm:"uniqueIndex;not null" json:"uuid"`
-	Username   string `gorm:"uniqueIndex" json:"username"`
-	TelegramID int64  `gorm:"index" json:"telegram_id"` // 0 если создан вручную
+	UUID             string `gorm:"uniqueIndex;not null" json:"uuid"`
+	Username         string `gorm:"uniqueIndex" json:"username"`    // Техническое имя для VLESS (user_123)
+	TelegramUsername string `gorm:"index" json:"telegram_username"` // Реальный ник в Телеграм (@nick)
+	TelegramID       int64  `gorm:"index" json:"telegram_id"`       // 0 если создан вручную
 
 	Status string `gorm:"default:'active'" json:"status"` // active, banned, expired
 
@@ -66,6 +67,7 @@ func Init(path string) {
 	}
 
 	// Миграция схемы
+	// GORM автоматически добавит новую колонку, если её нет
 	err = DB.AutoMigrate(&User{}, &SystemSettings{}, &ConnectionLog{})
 	if err != nil {
 		log.Fatal("Migration failed:", err)
@@ -92,6 +94,7 @@ func Init(path string) {
 		DB.Create(&User{
 			UUID:              "15986646-9dd8-45b8-b6d4-5c0cf9c8b784",
 			Username:          "MRiaz",
+			TelegramUsername:  "MRiaz", // Добавляем вручную для админа
 			Status:            "active",
 			TrafficLimit:      0, // Безлимит для админа
 			SubscriptionToken: GenerateToken(),
