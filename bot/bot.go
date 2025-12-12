@@ -30,41 +30,36 @@ func Start(token string, adminID int64) {
 
 	// --- Menus ---
 
-	// Главное меню (для зарегистрированных)
+	// Главное меню
 	menu := &tele.ReplyMarkup{ResizeKeyboard: true}
 	btnStatus := menu.Text("📊 Статус")
 	btnConnect := menu.Text("🔑 Подключиться")
 	btnHelp := menu.Text("🆘 Помощь")
 	menu.Reply(menu.Row(btnStatus, btnConnect), menu.Row(btnHelp))
 
-	// Гостевое меню (для новых пользователей)
+	// Гостевое меню
 	guestMenu := &tele.ReplyMarkup{ResizeKeyboard: true}
 	btnRequest := guestMenu.Text("📝 Подать заявку")
 	btnCheck := guestMenu.Text("🔄 Проверить статус")
 	guestMenu.Reply(guestMenu.Row(btnRequest), guestMenu.Row(btnCheck))
 
-	// Кнопки формата подключения (Inline)
+	// Кнопки формата подключения
 	connectMenu := &tele.ReplyMarkup{}
 	btnLink := connectMenu.Data("🔗 Ссылка", "conn_link")
-	btnFile := connectMenu.Data("📁 Файл конфига", "conn_file")
+	//btnFile := connectMenu.Data("📁 Файл конфига", "conn_file")
 	btnQR := connectMenu.Data("📷 QR код", "conn_qr")
 	connectMenu.Inline(
-		connectMenu.Row(btnLink),
-		connectMenu.Row(btnFile, btnQR),
+		connectMenu.Row(btnLink, btnQR),
 	)
 
 	// --- Handlers ---
 
-	// Функция проверки статуса (используется в /start и кнопке "Проверить статус")
 	checkStatus := func(c tele.Context) error {
 		var user database.User
-		// Ищем по TelegramID
 		result := database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user)
 
-		// Если не нашли пользователя
 		if result.Error != nil {
 			var existingUser database.User
-			// Логика авто-привязки админа
 			if c.Sender().ID == AdminID || c.Sender().ID == 124343839 {
 				if err := database.DB.Where("username = 'MRiaz' AND telegram_id = 0").First(&existingUser).Error; err == nil {
 					existingUser.TelegramID = c.Sender().ID
@@ -72,8 +67,6 @@ func Start(token string, adminID int64) {
 					return c.Send("✅ Ваш профиль администратора успешно привязан!", menu)
 				}
 			}
-
-			// Показываем гостевое меню
 			return c.Send("👋 Вы не зарегистрированы в системе.\n\nНажмите **📝 Подать заявку**, чтобы запросить доступ.", guestMenu)
 		}
 
@@ -87,9 +80,7 @@ func Start(token string, adminID int64) {
 	b.Handle("/start", checkStatus)
 	b.Handle(&btnCheck, checkStatus)
 
-	// Обработка заявки (команда и кнопка)
 	handleRequest := func(c tele.Context) error {
-		// Проверяем, может пользователь уже есть?
 		var user database.User
 		if database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user).Error == nil {
 			return c.Send("✅ У вас уже есть доступ!", menu)
@@ -106,7 +97,6 @@ func Start(token string, adminID int64) {
 			targetAdmin = 124343839
 		}
 
-		// Отправляем админу
 		_, err := b.Send(&tele.User{ID: targetAdmin}, msg, approveBtn)
 		if err != nil {
 			log.Println("Ошибка отправки админу:", err)
@@ -119,11 +109,9 @@ func Start(token string, adminID int64) {
 	b.Handle("/request", handleRequest)
 	b.Handle(&btnRequest, handleRequest)
 
-	// Админ нажимает "Одобрить"
 	b.Handle(&tele.Btn{Unique: "approve"}, func(c tele.Context) error {
 		targetID := c.Data()
 
-		// Проверяем, не создан ли уже
 		var exists database.User
 		if database.DB.Where("telegram_id = ?", targetID).First(&exists).Error == nil {
 			return c.Edit("⚠️ Этот пользователь уже добавлен.")
@@ -140,14 +128,12 @@ func Start(token string, adminID int64) {
 		database.DB.Create(&newUser)
 		service.GenerateAndReload()
 
-		// Уведомляем пользователя лично!
 		userChat := &tele.User{ID: parseInt(targetID)}
 		b.Send(userChat, "🎉 **Поздравляем! Ваш доступ одобрен.**\n\nТеперь вы можете пользоваться VPN. Нажмите кнопку ниже, чтобы подключиться.", menu)
 
 		return c.Edit(fmt.Sprintf("✅ Пользователь %s одобрен и уведомлен.", targetID))
 	})
 
-	// --- Логика кнопки "Подключиться" ---
 	b.Handle(&btnConnect, func(c tele.Context) error {
 		return c.Send("Как вы хотите получить настройки?", connectMenu)
 	})
@@ -175,14 +161,17 @@ func Start(token string, adminID int64) {
 		return c.Send(photo)
 	})
 
-	// ИСПРАВЛЕНО: Красивое отображение трафика (MB/GB)
-	b.Handle(&btnStatus, func(c tele.Context) error {
-		user, _ := getUserAndSettings(c.Sender().ID)
+	// Общая функция формирования сообщения статуса
+	getStatusMsg := func(tgID int64) (string, *tele.ReplyMarkup) {
+		// ВАЖНО: Принудительное обновление статистики ПЕРЕД показом
+		// Если функция UpdateTrafficStats существует в service, она опросит Xray
+		// Если её нет, эту строку нужно закомментировать, пока не реализуете service
+		// service.UpdateTrafficStats()
 
+		user, _ := getUserAndSettings(tgID)
 		used := formatBytes(user.TrafficUsed)
 		limit := formatBytes(user.TrafficLimit)
 
-		// Если лимит 0 - значит безлимит (или не установлен)
 		limitStr := limit
 		if user.TrafficLimit == 0 {
 			limitStr = "∞ (Безлимит)"
@@ -191,7 +180,25 @@ func Start(token string, adminID int64) {
 		msg := fmt.Sprintf("📊 **Ваш статус**\n\n👤 Пользователь: `%s`\n📉 Потрачено: **%s**\n📈 Лимит: **%s**",
 			user.Username, used, limitStr)
 
-		return c.Send(msg, tele.ModeMarkdown)
+		rm := &tele.ReplyMarkup{}
+		btnRefresh := rm.Data("🔄 Обновить", "status_refresh")
+		rm.Inline(rm.Row(btnRefresh))
+
+		return msg, rm
+	}
+
+	b.Handle(&btnStatus, func(c tele.Context) error {
+		// Тут можно вызвать обновление
+		// service.UpdateTrafficStats()
+		msg, rm := getStatusMsg(c.Sender().ID)
+		return c.Send(msg, tele.ModeMarkdown, rm)
+	})
+
+	b.Handle(&tele.Btn{Unique: "status_refresh"}, func(c tele.Context) error {
+		// И тут тоже вызываем обновление
+		// service.UpdateTrafficStats()
+		msg, rm := getStatusMsg(c.Sender().ID)
+		return c.Edit(msg, tele.ModeMarkdown, rm)
 	})
 
 	b.Handle(&btnHelp, func(c tele.Context) error {
@@ -226,6 +233,14 @@ func Start(token string, adminID int64) {
 		return c.Send(helpMsg, tele.ModeMarkdown)
 	})
 
+	// Фоновая задача (для бана нарушителей, которые не нажимают кнопку)
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			// service.UpdateTrafficStats()
+		}
+	}()
+
 	b.Start()
 }
 
@@ -243,8 +258,10 @@ func parseInt(s string) int64 {
 	return i
 }
 
-// Вспомогательная функция для форматирования байт
 func formatBytes(b int64) string {
+	if b == 0 {
+		return "0.00 MB"
+	}
 	const unit = 1024
 	if b < unit {
 		return fmt.Sprintf("%d B", b)
