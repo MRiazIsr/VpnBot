@@ -209,9 +209,14 @@ func Start(token string, adminID int64) {
 
 	// Фоновая задача (для бана нарушителей, которые не нажимают кнопку)
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
+		// Опрашиваем часто, чтобы не упустить короткие сессии
+		ticker := time.NewTicker(10 * time.Second)
 		for range ticker.C {
-			// service.UpdateTrafficStats()
+			// Используем новую функцию
+			err := service.UpdateTrafficViaAPI()
+			if err != nil {
+				log.Println("Traffic update error:", err)
+			}
 		}
 	}()
 
