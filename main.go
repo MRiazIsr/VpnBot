@@ -1,17 +1,36 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 	"vpnbot/bot"
 	"vpnbot/database"
 	"vpnbot/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
-// CORSMiddleware разрешает запросы с фронтенда
+// Секретный ключ для подписи JWT (в реальном проекте лучше тоже в ENV)
+var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+
+func init() {
+	if len(jwtSecret) == 0 {
+		jwtSecret = []byte("default-secret-key-change-me")
+	}
+}
+
+// Структура для логина
+type LoginRequest struct {
+	Password string `json:"password" binding:"required"`
+}
+
+// Middleware для CORS
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -21,6 +40,32 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// Middleware для проверки авторизации
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+			return
+		}
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return jwtSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
 
@@ -50,58 +95,89 @@ func main() {
 
 	// 4. HTTP API Server
 	r := gin.Default()
-	r.Use(CORSMiddleware()) // Включаем CORS
+	r.Use(CORSMiddleware())
 
 	api := r.Group("/api")
 	{
-		// Получить всех пользователей
-		api.GET("/users", func(c *gin.Context) {
-			var users []database.User
-			database.DB.Find(&users)
-			c.JSON(200, users)
-		})
+		// Публичный роут для логина
+		api.POST("/login", func(c *gin.Context) {
+			var loginReq LoginRequest
+			if err := c.ShouldBindJSON(&loginReq); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+				return
+			}
 
-		// Создать пользователя (если нужно вручную)
-		api.POST("/users", func(c *gin.Context) {
-			// Логику можно добавить позже
-		})
+			adminPassword := os.Getenv("ADMIN_PASSWORD")
+			if adminPassword == "" {
+				// Если пароль не задан, логин невозможен (безопасность)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Server admin password not configured"})
+				return
+			}
 
-		// Банить/Разбанивать пользователя
-		api.PUT("/users/:id/status", func(c *gin.Context) {
-			idStr := c.Param("id")
-			id, err := strconv.Atoi(idStr)
+			if loginReq.Password != adminPassword {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
+				return
+			}
+
+			// Генерация токена
+			token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+				"admin": true,
+				"exp":   time.Now().Add(time.Hour * 24).Unix(), // Токен на 24 часа
+			})
+
+			tokenString, err := token.SignedString(jwtSecret)
 			if err != nil {
-				c.JSON(400, gin.H{"error": "Invalid ID"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
 				return
 			}
 
-			var user database.User
-			if err := database.DB.First(&user, id).Error; err != nil {
-				c.JSON(404, gin.H{"error": "User not found"})
-				return
-			}
-
-			// Читаем новый статус из JSON тела запроса
-			var input struct {
-				Status string `json:"status"` // "active" или "banned"
-			}
-			if err := c.ShouldBindJSON(&input); err != nil {
-				c.JSON(400, gin.H{"error": "Invalid input"})
-				return
-			}
-
-			// Обновляем статус
-			user.Status = input.Status
-			database.DB.Save(&user)
-
-			// Перезагружаем Sing-box, чтобы применить блокировку
-			service.GenerateAndReload()
-
-			c.JSON(200, user)
+			c.JSON(http.StatusOK, gin.H{"token": tokenString})
 		})
+
+		// Защищенные роуты
+		authorized := api.Group("/")
+		authorized.Use(AuthMiddleware())
+		{
+			// Получить всех пользователей
+			authorized.GET("/users", func(c *gin.Context) {
+				var users []database.User
+				database.DB.Find(&users)
+				c.JSON(200, users)
+			})
+
+			// Банить/Разбанивать пользователя
+			authorized.PUT("/users/:id/status", func(c *gin.Context) {
+				idStr := c.Param("id")
+				id, err := strconv.Atoi(idStr)
+				if err != nil {
+					c.JSON(400, gin.H{"error": "Invalid ID"})
+					return
+				}
+
+				var user database.User
+				if err := database.DB.First(&user, id).Error; err != nil {
+					c.JSON(404, gin.H{"error": "User not found"})
+					return
+				}
+
+				var input struct {
+					Status string `json:"status"`
+				}
+				if err := c.ShouldBindJSON(&input); err != nil {
+					c.JSON(400, gin.H{"error": "Invalid input"})
+					return
+				}
+
+				user.Status = input.Status
+				database.DB.Save(&user)
+				service.GenerateAndReload()
+
+				c.JSON(200, user)
+			})
+		}
 	}
 
-	// Subscription URL
+	// Subscription URL (публичный, без токена)
 	r.GET("/sub/:token", func(c *gin.Context) {
 		token := c.Param("token")
 		var user database.User
