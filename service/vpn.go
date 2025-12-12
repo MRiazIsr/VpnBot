@@ -1,26 +1,57 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 	"vpnbot/database"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"gorm.io/gorm"
+
+	// Импортируем типы для V2Ray API (gRPC)
+	"github.com/v2fly/v2ray-core/v4/app/stats/command"
 )
 
 const ConfigPath = "/etc/sing-box/config.json"
+const ApiAddr = "127.0.0.1:10000" // Порт для gRPC API
+
+// --- Config Structures ---
+
+type SingBoxConfig struct {
+	Log          LogConfig           `json:"log"`
+	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
+	Inbounds     []InboundConfig     `json:"inbounds"`
+	Outbounds    []OutboundConfig    `json:"outbounds"`
+}
+
+// Конфигурация V2Ray API (вместо Clash API)
+type ExperimentalConfig struct {
+	V2RayAPI V2RayAPIConfig `json:"v2ray_api"`
+}
+
+type V2RayAPIConfig struct {
+	Listen string      `json:"listen"`
+	Stats  StatsConfig `json:"stats"`
+}
+
+type StatsConfig struct {
+	Enabled  bool     `json:"enabled"`
+	Inbounds []string `json:"inbounds"`
+	Users    []string `json:"users"` // Список юзеров для отслеживания
+}
 
 type LogConfig struct {
 	Level     string `json:"level"`
 	Timestamp bool   `json:"timestamp"`
-	Output    string `json:"output,omitempty"` // Добавляем файл логов для подсчета трафика
+	Output    string `json:"output,omitempty"`
 }
 
 type InboundConfig struct {
@@ -57,101 +88,53 @@ type ServerEP struct {
 	ServerPort int    `json:"server_port"`
 }
 
-// Outbounds нужны, чтобы сервер знал, куда слать трафик (в интернет или в блок)
 type OutboundConfig struct {
 	Type string `json:"type"`
 	Tag  string `json:"tag"`
-}
-
-// service/vpn.go
-
-// Глобальная переменная для хранения предыдущего состояния соединений.
-// Ключ - ID соединения (UUID от Sing-Box), Значение - сколько байт уже учтено.
-var activeConnections = make(map[string]trafficData)
-
-type trafficData struct {
-	Up   int64
-	Down int64
-}
-
-// ClashConnectionsResponse Структуры ответа Clash API (/connections)
-type ClashConnectionsResponse struct {
-	Connections []ClashConnection `json:"connections"`
-}
-
-type ClashConnection struct {
-	ID       string        `json:"id"`
-	Metadata ClashMetadata `json:"metadata"`
-	Upload   int64         `json:"upload"`
-	Download int64         `json:"download"`
-}
-
-type ClashMetadata struct {
-	// В VLESS inbound Sing-Box обычно кладет имя юзера в поле User или Username
-	// Проверьте поле "user" или "username" в JSON ответе, обычно это "username"
-	Username string `json:"username"`
-	User     string `json:"user"` // Иногда может быть здесь, зависит от версии
-}
-
-// SingBoxConfig 1. Обновляем главную структуру
-type SingBoxConfig struct {
-	Log          LogConfig           `json:"log"`
-	Inbounds     []InboundConfig     `json:"inbounds"`
-	Outbounds    []OutboundConfig    `json:"outbounds"`
-	Experimental *ExperimentalConfig `json:"experimental,omitempty"` // <-- Добавлено
-}
-
-// ExperimentalConfig 2. Добавляем структуры для Experimental / Clash API
-type ExperimentalConfig struct {
-	ClashAPI ClashAPIConfig `json:"clash_api"`
-}
-
-type ClashAPIConfig struct {
-	ExternalController string `json:"external_controller"` // например "127.0.0.1:9090"
-	Secret             string `json:"secret"`              // Секретный токен для доступа
 }
 
 // --- Logic ---
 
 func GenerateAndReload() error {
 	var users []database.User
-	// Берем всех активных (включая твоего админского юзера)
 	database.DB.Where("status = ?", "active").Find(&users)
 
 	var settings database.SystemSettings
 	database.DB.First(&settings)
 
-	// 1. Формируем список пользователей
 	vlessUsers := []VLessUser{}
+	userNames := []string{} // Список имен для статистики
+
 	for _, u := range users {
 		vlessUsers = append(vlessUsers, VLessUser{
 			Name: u.Username,
 			UUID: u.UUID,
 			Flow: "xtls-rprx-vision",
 		})
+		// Собираем имена, чтобы Sing-box знал, кого считать
+		userNames = append(userNames, u.Username)
 	}
 
-	// 2. Парсим ShortIDs
 	var shortIDs []string
 	if err := json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs); err != nil {
-		// Фоллбэк, если JSON в базе побился
 		shortIDs = []string{"207fc82a9f9e741f"}
 	}
 
-	// 3. Собираем конфиг
 	cfg := SingBoxConfig{
 		Log: LogConfig{
 			Level:     "info",
 			Timestamp: true,
-			// Output больше не обязателен, если мы не читаем логи,
-			// но можно оставить для отладки
-			Output: "/etc/sing-box/access.log",
+			Output:    "/etc/sing-box/access.log",
 		},
-		// Добавляем настройку API
+		// Включаем V2Ray API (gRPC)
 		Experimental: &ExperimentalConfig{
-			ClashAPI: ClashAPIConfig{
-				ExternalController: "127.0.0.1:9090",   // Порт для управления
-				Secret:             "MySecretToken123", // Придумайте сложный пароль
+			V2RayAPI: V2RayAPIConfig{
+				Listen: ApiAddr, // 127.0.0.1:10000
+				Stats: StatsConfig{
+					Enabled:  true,
+					Inbounds: []string{"vless-in"},
+					Users:    userNames, // <--- ВАЖНО: передаем список юзеров
+				},
 			},
 		},
 		Inbounds: []InboundConfig{
@@ -177,21 +160,17 @@ func GenerateAndReload() error {
 				},
 			},
 		},
-		// Добавляем Outbounds, иначе VPN подключится, но интернета не будет
 		Outbounds: []OutboundConfig{
 			{Type: "direct", Tag: "direct"},
 			{Type: "block", Tag: "block"},
 		},
 	}
 
-	// Генерируем JSON с отступами (красивый)
 	file, _ := json.MarshalIndent(cfg, "", "  ")
 
-	// Записываем в реальный файл конфига
 	err := os.WriteFile(ConfigPath, file, 0644)
 	if err != nil {
 		log.Println("Error writing config file:", err)
-		// Если прав нет (локальный тест), выведем в консоль
 		fmt.Println(string(file))
 	} else {
 		return ReloadService()
@@ -209,7 +188,6 @@ func ReloadService() error {
 	return nil
 }
 
-// GenerateLink создает VLESS ссылку для клиента
 func GenerateLink(user database.User, settings database.SystemSettings, serverIP string) string {
 	v := url.Values{}
 	v.Add("security", "reality")
@@ -230,102 +208,82 @@ func GenerateLink(user database.User, settings database.SystemSettings, serverIP
 		user.UUID, serverIP, settings.ListenPort, v.Encode(), url.QueryEscape(user.Username))
 }
 
-// Регулярное выражение для парсинга логов Sing-box
-// Ищет строки вида: inbound/vless-in[username] ... downlink: 1234, uplink: 5678
+// --- API Traffic Logic (gRPC V2Ray) ---
+
+// Храним последнее значение счетчика (Absolute value), чтобы считать разницу
+var previousStats = make(map[string]int64)
 
 func UpdateTrafficViaAPI() error {
-	apiURL := "http://127.0.0.1:9090/connections"
-	apiSecret := "MySecretToken123" // Тот же, что в конфиге
-
-	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest("GET", apiURL, nil)
+	// Подключаемся к gRPC серверу Sing-box
+	conn, err := grpc.Dial(ApiAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiSecret)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		// Sing-Box может быть перезагружен или выключен
+		// Sing-box выключен
 		return nil
 	}
-	defer resp.Body.Close()
+	defer conn.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	var data ClashConnectionsResponse
-	if err := json.Unmarshal(body, &data); err != nil {
+	client := command.NewStatsServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Запрашиваем статистику по всем юзерам (pattern: "user>>>")
+	// Reset_: false, чтобы не сбрасывать счетчики в sing-box (мы сами считаем дельту)
+	resp, err := client.QueryStats(ctx, &command.QueryStatsRequest{
+		Pattern: "user>>>",
+		Reset_:  false,
+	})
+	if err != nil {
 		return err
 	}
 
-	// Карта для накопления дельты (разницы) за этот опрос
-	userTrafficDelta := make(map[string]trafficData)
+	// Карта для накопления дельты за этот проход
+	userTrafficDelta := make(map[string]int64)
+	currentStats := make(map[string]int64)
 
-	// Список активных ID в текущем опросе (для очистки памяти)
-	currentActiveIDs := make(map[string]bool)
-
-	for _, conn := range data.Connections {
-		currentActiveIDs[conn.ID] = true
-
-		// Определяем имя пользователя
-		username := conn.Metadata.Username
-		if username == "" {
-			username = conn.Metadata.User
+	for _, stat := range resp.Stat {
+		// Name format: "user>>>username>>>traffic>>>downlink"
+		parts := strings.Split(stat.Name, ">>>")
+		if len(parts) < 4 {
+			continue
 		}
-		if username == "" {
-			continue // Соединение без пользователя (системное или неизвестное)
-		}
+		username := parts[1]
+		direction := parts[3] // downlink or uplink
 
-		// Считаем разницу (Delta)
-		prevData := activeConnections[conn.ID]
+		// Сохраняем текущее абсолютное значение
+		// Ключ: "MRiaz_downlink"
+		key := fmt.Sprintf("%s_%s", username, direction)
+		currentStats[key] = stat.Value
 
-		// Если соединение долго живет, bytes растут.
-		// Новое - Старое = То, что набежало за последние 5 секунд.
-		// Важно: если Sing-Box перезагрузился, ID сбросятся, так что коллизий не будет.
-		deltaUp := conn.Upload - prevData.Up
-		deltaDown := conn.Download - prevData.Down
+		// Считаем разницу с предыдущим замером
+		prev := previousStats[key]
+		delta := stat.Value - prev
 
-		// Защита от странных скачков (если вдруг счетчик сбросился)
-		if deltaUp < 0 {
-			deltaUp = conn.Upload
-		}
-		if deltaDown < 0 {
-			deltaDown = conn.Download
+		// Если Sing-box перезагрузился, stat.Value будет меньше prev (сброс)
+		// В этом случае delta = stat.Value (считаем с нуля)
+		if delta < 0 {
+			delta = stat.Value
 		}
 
-		// Обновляем "предыдущее" состояние на текущее
-		activeConnections[conn.ID] = trafficData{
-			Up:   conn.Upload,
-			Down: conn.Download,
-		}
-
-		// Добавляем к сумме по юзеру
-		if deltaUp > 0 || deltaDown > 0 {
-			stats := userTrafficDelta[username]
-			stats.Up += deltaUp
-			stats.Down += deltaDown
-			userTrafficDelta[username] = stats
+		if delta > 0 {
+			userTrafficDelta[username] += delta
 		}
 	}
 
-	// Очистка памяти: удаляем ID соединений, которых больше нет в API
-	for id := range activeConnections {
-		if !currentActiveIDs[id] {
-			delete(activeConnections, id)
-		}
+	// Обновляем "предыдущие" значения
+	for k, v := range currentStats {
+		previousStats[k] = v
 	}
 
-	// Запись в БД
-	for username, traffic := range userTrafficDelta {
-		total := traffic.Up + traffic.Down
-		if total > 0 {
+	// Пишем в БД
+	for username, newBytes := range userTrafficDelta {
+		if newBytes > 0 {
 			err := database.DB.Model(&database.User{}).
 				Where("username = ?", username).
-				Update("traffic_used", gorm.Expr("traffic_used + ?", total)).Error
+				Update("traffic_used", gorm.Expr("traffic_used + ?", newBytes)).Error
 
 			if err != nil {
-				log.Printf("DB Error update traffic for %s: %v", username, err)
+				log.Printf("DB Error: %v", err)
 			} else {
-				// Проверка лимитов (ваша существующая функция)
 				checkLimits(username)
 			}
 		}
@@ -334,7 +292,6 @@ func UpdateTrafficViaAPI() error {
 	return nil
 }
 
-// Вспомогательная функция для проверки лимитов (можно расширить позже)
 func checkLimits(username string) {
 	var user database.User
 	if err := database.DB.Where("username = ?", username).First(&user).Error; err == nil {
@@ -342,7 +299,7 @@ func checkLimits(username string) {
 			if user.Status == "active" {
 				database.DB.Model(&user).Update("status", "expired")
 				log.Printf("User %s expired due to traffic limit", username)
-				// Тут можно вызвать GenerateAndReload(), чтобы отключить юзера немедленно
+				GenerateAndReload()
 			}
 		}
 	}
