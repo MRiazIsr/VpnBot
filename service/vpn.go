@@ -155,7 +155,27 @@ func GenerateAndReload() error {
 			},
 		},
 		Inbounds: []InboundConfig{
-			// ... ваши inbounds (без изменений)
+			{
+				Type:       "vless",
+				Tag:        "vless-in",
+				Listen:     "::",
+				ListenPort: settings.ListenPort,
+				Users:      vlessUsers,
+				TLS: &TLSConfig{
+					Enabled:    true,
+					ServerName: settings.ServerName,
+					Reality: &RealityConfig{
+						Enabled:    true,
+						PrivateKey: settings.RealityPrivateKey,
+						ShortID:    shortIDs,
+						Handshake: ServerEP{
+							Server:     settings.ServerName,
+							ServerPort: 443,
+						},
+						MaxTimeDifference: "1m",
+					},
+				},
+			},
 		},
 		// Добавляем Outbounds, иначе VPN подключится, но интернета не будет
 		Outbounds: []OutboundConfig{

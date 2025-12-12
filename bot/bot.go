@@ -46,7 +46,6 @@ func Start(token string, adminID int64) {
 	// Кнопки формата подключения
 	connectMenu := &tele.ReplyMarkup{}
 	btnLink := connectMenu.Data("🔗 Ссылка", "conn_link")
-	//btnFile := connectMenu.Data("📁 Файл конфига", "conn_file")
 	btnQR := connectMenu.Data("📷 QR код", "conn_qr")
 	connectMenu.Inline(
 		connectMenu.Row(btnLink, btnQR),
@@ -162,15 +161,11 @@ func Start(token string, adminID int64) {
 	})
 
 	b.Handle(&btnStatus, func(c tele.Context) error {
-		// Тут можно вызвать обновление
-		// service.UpdateTrafficStats()
 		msg, rm := getStatusMsg(c.Sender().ID)
 		return c.Send(msg, tele.ModeMarkdown, rm)
 	})
 
 	b.Handle(&tele.Btn{Unique: "status_refresh"}, func(c tele.Context) error {
-		// И тут тоже вызываем обновление
-		// service.UpdateTrafficStats()
 		msg, rm := getStatusMsg(c.Sender().ID)
 		return c.Edit(msg, tele.ModeMarkdown, rm)
 	})
@@ -207,12 +202,11 @@ func Start(token string, adminID int64) {
 		return c.Send(helpMsg, tele.ModeMarkdown)
 	})
 
-	// Фоновая задача (для бана нарушителей, которые не нажимают кнопку)
+	// Фоновая задача
 	go func() {
 		// Опрашиваем часто, чтобы не упустить короткие сессии
 		ticker := time.NewTicker(10 * time.Second)
 		for range ticker.C {
-			// Используем новую функцию
 			err := service.UpdateTrafficViaAPI()
 			if err != nil {
 				log.Println("Traffic update error:", err)
@@ -222,12 +216,12 @@ func Start(token string, adminID int64) {
 
 	b.Start()
 }
-func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
-	// 1. ВАЖНО: Сначала читаем логи и обновляем цифры в базе!
-	// Если этой строки нет, ты увидишь старые данные.
-	service.UpdateTrafficStats()
 
-	// 2. Получаем данные текущего пользователя (теперь они свежие)
+func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
+	// 1. ВАЖНО: Сначала читаем статистику через API
+	service.UpdateTrafficViaAPI() // Исправленный вызов!
+
+	// 2. Получаем данные текущего пользователя
 	user, _ := getUserAndSettings(tgID)
 	used := formatBytes(user.TrafficUsed)
 	limit := formatBytes(user.TrafficLimit)
