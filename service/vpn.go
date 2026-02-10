@@ -64,7 +64,9 @@ type InboundConfig struct {
 }
 
 type TransportConfig struct {
-	Type string `json:"type"`
+	Type        string `json:"type"`
+	ServiceName string `json:"service_name,omitempty"`
+	Path        string `json:"path,omitempty"`
 }
 
 type MultiplexConfig struct {
@@ -155,7 +157,7 @@ func GenerateAndReload() error {
 				Listen: ApiAddr,
 				Stats: StatsConfig{
 					Enabled:  true,
-					Inbounds: []string{"vless-in", "vless-in-h2", "hy2-in"},
+					Inbounds: []string{"vless-in", "vless-in-h2", "hy2-in", "vless-in-grpc", "vless-in-ws"},
 					Users:    userNames,
 				},
 			},
@@ -216,6 +218,50 @@ func GenerateAndReload() error {
 					CertificatePath: "/etc/sing-box/hy2-cert.pem",
 					KeyPath:         "/etc/sing-box/hy2-key.pem",
 				},
+			},
+			{
+				Type:       "vless",
+				Tag:        "vless-in-grpc",
+				Listen:     "::",
+				ListenPort: 2054,
+				Users:      newUsers,
+				TLS: &TLSConfig{
+					Enabled:    true,
+					ServerName: "dl.google.com",
+					Reality: &RealityConfig{
+						Enabled:    true,
+						PrivateKey: settings.RealityPrivateKey,
+						ShortID:    shortIDs,
+						Handshake: ServerEP{
+							Server:     "dl.google.com",
+							ServerPort: 443,
+						},
+						MaxTimeDifference: "1m",
+					},
+				},
+				Transport: &TransportConfig{Type: "grpc", ServiceName: "grpc-vpn"},
+			},
+			{
+				Type:       "vless",
+				Tag:        "vless-in-ws",
+				Listen:     "::",
+				ListenPort: 2056,
+				Users:      newUsers,
+				TLS: &TLSConfig{
+					Enabled:    true,
+					ServerName: "www.microsoft.com",
+					Reality: &RealityConfig{
+						Enabled:    true,
+						PrivateKey: settings.RealityPrivateKey,
+						ShortID:    shortIDs,
+						Handshake: ServerEP{
+							Server:     "www.microsoft.com",
+							ServerPort: 443,
+						},
+						MaxTimeDifference: "1m",
+					},
+				},
+				Transport: &TransportConfig{Type: "ws", Path: "/ws"},
 			},
 		},
 		Outbounds: []OutboundConfig{
@@ -283,6 +329,46 @@ func GenerateLinkAntiCensorship(user database.User, settings database.SystemSett
 
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 		user.UUID, serverIP, 2053, v.Encode(), url.QueryEscape(user.Username))
+}
+
+func GenerateLinkGRPC(user database.User, settings database.SystemSettings, serverIP string) string {
+	v := url.Values{}
+	v.Add("security", "reality")
+	v.Add("encryption", "none")
+	v.Add("pbk", settings.RealityPublicKey)
+	v.Add("fp", "chrome")
+	v.Add("type", "grpc")
+	v.Add("serviceName", "grpc-vpn")
+	v.Add("sni", "dl.google.com")
+
+	var shortIDs []string
+	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
+	if len(shortIDs) > 0 {
+		v.Add("sid", shortIDs[0])
+	}
+
+	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+		user.UUID, serverIP, 2054, v.Encode(), url.QueryEscape(user.Username))
+}
+
+func GenerateLinkWebSocket(user database.User, settings database.SystemSettings, serverIP string) string {
+	v := url.Values{}
+	v.Add("security", "reality")
+	v.Add("encryption", "none")
+	v.Add("pbk", settings.RealityPublicKey)
+	v.Add("fp", "chrome")
+	v.Add("type", "ws")
+	v.Add("path", "/ws")
+	v.Add("sni", "www.microsoft.com")
+
+	var shortIDs []string
+	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
+	if len(shortIDs) > 0 {
+		v.Add("sid", shortIDs[0])
+	}
+
+	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+		user.UUID, serverIP, 2056, v.Encode(), url.QueryEscape(user.Username))
 }
 
 func GenerateLinkHysteria2(user database.User, serverIP string) string {
