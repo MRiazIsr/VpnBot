@@ -60,14 +60,11 @@ func Start(token string, adminID int64) {
 	btnQRHy2 := connectMenu.Data("⚡ Hysteria2 QR", "conn_qr_hy2")
 	btnLinkGRPC := connectMenu.Data("📡 gRPC ссылка", "conn_link_grpc")
 	btnQRGRPC := connectMenu.Data("📡 gRPC QR", "conn_qr_grpc")
-	btnLinkWS := connectMenu.Data("🌐 WebSocket ссылка", "conn_link_ws")
-	btnQRWS := connectMenu.Data("🌐 WebSocket QR", "conn_qr_ws")
 	connectMenu.Inline(
 		connectMenu.Row(btnLink, btnQR),
 		connectMenu.Row(btnLinkAC, btnQRAC),
 		connectMenu.Row(btnLinkHy2, btnQRHy2),
 		connectMenu.Row(btnLinkGRPC, btnQRGRPC),
-		connectMenu.Row(btnLinkWS, btnQRWS),
 	)
 
 	// --- Handlers ---
@@ -178,7 +175,7 @@ func Start(token string, adminID int64) {
 	})
 
 	b.Handle(&btnConnect, func(c tele.Context) error {
-		return c.Send("Выберите тип подключения:\n\n🔗 — стандарт (443, TCP)\n🛡 — антиблок (2053, HTTP/2)\n⚡ — Hysteria2 (2055, UDP)\n📡 — gRPC (2054, TCP)\n🌐 — WebSocket (2056, TCP)\n\nПробуйте разные — зависит от провайдера.", connectMenu)
+		return c.Send("Выберите тип подключения:\n\n🔗 — стандарт (443, TCP)\n🛡 — антиблок (2053, HTTP/2)\n⚡ — Hysteria2 (2055, UDP)\n📡 — gRPC (2054, TCP)\n\nПробуйте разные — зависит от провайдера.", connectMenu)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_link"}, func(c tele.Context) error {
@@ -261,25 +258,6 @@ func Start(token string, adminID int64) {
 		return c.Send(photo)
 	})
 
-	b.Handle(&tele.Btn{Unique: "conn_link_ws"}, func(c tele.Context) error {
-		user, settings := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLinkWebSocket(user, settings, "49.13.201.110")
-		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
-	})
-
-	b.Handle(&tele.Btn{Unique: "conn_qr_ws"}, func(c tele.Context) error {
-		user, settings := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLinkWebSocket(user, settings, "49.13.201.110")
-
-		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
-		if err != nil {
-			return c.Send("❌ Ошибка генерации QR кода.")
-		}
-
-		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "🌐 WebSocket — сканируйте в Hiddify"}
-		return c.Send(photo)
-	})
-
 	b.Handle(&btnStatus, func(c tele.Context) error {
 		msg, rm := getStatusMsg(c.Sender().ID)
 		return c.Send(msg, tele.ModeMarkdown, rm)
@@ -322,7 +300,6 @@ func Start(token string, adminID int64) {
 • **🛡 Антиблок** — порт 2053, HTTP/2
 • **⚡ Hysteria2** — порт 2055, UDP
 • **📡 gRPC** — порт 2054, похож на API-трафик
-• **🌐 WebSocket** — порт 2056, похож на веб-сайт
 Добавьте все профили в Hiddify — переключайтесь при необходимости.
 
 ❓ Если возникли проблемы, пишите администратору.`

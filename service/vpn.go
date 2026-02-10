@@ -66,7 +66,6 @@ type InboundConfig struct {
 type TransportConfig struct {
 	Type        string `json:"type"`
 	ServiceName string `json:"service_name,omitempty"`
-	Path        string `json:"path,omitempty"`
 }
 
 type MultiplexConfig struct {
@@ -157,7 +156,7 @@ func GenerateAndReload() error {
 				Listen: ApiAddr,
 				Stats: StatsConfig{
 					Enabled:  true,
-					Inbounds: []string{"vless-in", "vless-in-h2", "hy2-in", "vless-in-grpc", "vless-in-ws"},
+					Inbounds: []string{"vless-in", "vless-in-h2", "hy2-in", "vless-in-grpc"},
 					Users:    userNames,
 				},
 			},
@@ -240,28 +239,6 @@ func GenerateAndReload() error {
 					},
 				},
 				Transport: &TransportConfig{Type: "grpc", ServiceName: "grpc-vpn"},
-			},
-			{
-				Type:       "vless",
-				Tag:        "vless-in-ws",
-				Listen:     "::",
-				ListenPort: 2056,
-				Users:      newUsers,
-				TLS: &TLSConfig{
-					Enabled:    true,
-					ServerName: "mail.ru",
-					Reality: &RealityConfig{
-						Enabled:    true,
-						PrivateKey: settings.RealityPrivateKey,
-						ShortID:    shortIDs,
-						Handshake: ServerEP{
-							Server:     "mail.ru",
-							ServerPort: 443,
-						},
-						MaxTimeDifference: "1m",
-					},
-				},
-				Transport: &TransportConfig{Type: "ws", Path: "/ws"},
 			},
 		},
 		Outbounds: []OutboundConfig{
@@ -349,26 +326,6 @@ func GenerateLinkGRPC(user database.User, settings database.SystemSettings, serv
 
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 		user.UUID, serverIP, 2054, v.Encode(), url.QueryEscape(user.Username))
-}
-
-func GenerateLinkWebSocket(user database.User, settings database.SystemSettings, serverIP string) string {
-	v := url.Values{}
-	v.Add("security", "reality")
-	v.Add("encryption", "none")
-	v.Add("pbk", settings.RealityPublicKey)
-	v.Add("fp", "chrome")
-	v.Add("type", "ws")
-	v.Add("path", "/ws")
-	v.Add("sni", "mail.ru")
-
-	var shortIDs []string
-	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
-	if len(shortIDs) > 0 {
-		v.Add("sid", shortIDs[0])
-	}
-
-	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
-		user.UUID, serverIP, 2056, v.Encode(), url.QueryEscape(user.Username))
 }
 
 func GenerateLinkHysteria2(user database.User, serverIP string) string {
