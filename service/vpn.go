@@ -227,13 +227,13 @@ func GenerateAndReload() error {
 				Users:      newUsers,
 				TLS: &TLSConfig{
 					Enabled:    true,
-					ServerName: "dl.google.com",
+					ServerName: "vk.com",
 					Reality: &RealityConfig{
 						Enabled:    true,
 						PrivateKey: settings.RealityPrivateKey,
 						ShortID:    shortIDs,
 						Handshake: ServerEP{
-							Server:     "dl.google.com",
+							Server:     "vk.com",
 							ServerPort: 443,
 						},
 						MaxTimeDifference: "1m",
@@ -249,13 +249,13 @@ func GenerateAndReload() error {
 				Users:      newUsers,
 				TLS: &TLSConfig{
 					Enabled:    true,
-					ServerName: "www.microsoft.com",
+					ServerName: "mail.ru",
 					Reality: &RealityConfig{
 						Enabled:    true,
 						PrivateKey: settings.RealityPrivateKey,
 						ShortID:    shortIDs,
 						Handshake: ServerEP{
-							Server:     "www.microsoft.com",
+							Server:     "mail.ru",
 							ServerPort: 443,
 						},
 						MaxTimeDifference: "1m",
@@ -339,7 +339,7 @@ func GenerateLinkGRPC(user database.User, settings database.SystemSettings, serv
 	v.Add("fp", "chrome")
 	v.Add("type", "grpc")
 	v.Add("serviceName", "grpc-vpn")
-	v.Add("sni", "dl.google.com")
+	v.Add("sni", "vk.com")
 
 	var shortIDs []string
 	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
@@ -359,7 +359,7 @@ func GenerateLinkWebSocket(user database.User, settings database.SystemSettings,
 	v.Add("fp", "chrome")
 	v.Add("type", "ws")
 	v.Add("path", "/ws")
-	v.Add("sni", "www.microsoft.com")
+	v.Add("sni", "mail.ru")
 
 	var shortIDs []string
 	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
