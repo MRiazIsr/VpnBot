@@ -57,7 +57,7 @@ type InboundConfig struct {
 	Tag        string           `json:"tag"`
 	Listen     string           `json:"listen"`
 	ListenPort int              `json:"listen_port"`
-	Users      []VLessUser      `json:"users,omitempty"`
+	Users      interface{}      `json:"users,omitempty"`
 	TLS        *TLSConfig       `json:"tls,omitempty"`
 	Transport  *TransportConfig `json:"transport,omitempty"`
 	Multiplex  *MultiplexConfig `json:"multiplex,omitempty"`
@@ -71,6 +71,11 @@ type MultiplexConfig struct {
 	Enabled bool `json:"enabled"`
 }
 
+type Hysteria2User struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
+}
+
 type VLessUser struct {
 	Name string `json:"name"`
 	UUID string `json:"uuid"`
@@ -78,9 +83,11 @@ type VLessUser struct {
 }
 
 type TLSConfig struct {
-	Enabled    bool           `json:"enabled"`
-	ServerName string         `json:"server_name"`
-	Reality    *RealityConfig `json:"reality,omitempty"`
+	Enabled         bool           `json:"enabled"`
+	ServerName      string         `json:"server_name,omitempty"`
+	Reality         *RealityConfig `json:"reality,omitempty"`
+	CertificatePath string         `json:"certificate_path,omitempty"`
+	KeyPath         string         `json:"key_path,omitempty"`
 }
 
 type RealityConfig struct {
@@ -112,6 +119,7 @@ func GenerateAndReload() error {
 
 	legacyUsers := []VLessUser{}
 	newUsers := []VLessUser{}
+	hy2Users := []Hysteria2User{}
 	userNames := []string{}
 
 	for _, u := range users {
@@ -123,6 +131,10 @@ func GenerateAndReload() error {
 		newUsers = append(newUsers, VLessUser{
 			Name: u.Username,
 			UUID: u.UUID,
+		})
+		hy2Users = append(hy2Users, Hysteria2User{
+			Name:     u.Username,
+			Password: u.UUID,
 		})
 		userNames = append(userNames, u.Username)
 	}
@@ -143,7 +155,7 @@ func GenerateAndReload() error {
 				Listen: ApiAddr,
 				Stats: StatsConfig{
 					Enabled:  true,
-					Inbounds: []string{"vless-in", "vless-in-h2"},
+					Inbounds: []string{"vless-in", "vless-in-h2", "hy2-in"},
 					Users:    userNames,
 				},
 			},
@@ -192,6 +204,18 @@ func GenerateAndReload() error {
 				},
 				Transport: &TransportConfig{Type: "http"},
 				Multiplex: &MultiplexConfig{Enabled: true},
+			},
+			{
+				Type:       "hysteria2",
+				Tag:        "hy2-in",
+				Listen:     "::",
+				ListenPort: 2055,
+				Users:      hy2Users,
+				TLS: &TLSConfig{
+					Enabled:         true,
+					CertificatePath: "/etc/sing-box/hy2-cert.pem",
+					KeyPath:         "/etc/sing-box/hy2-key.pem",
+				},
 			},
 		},
 		Outbounds: []OutboundConfig{
@@ -259,6 +283,14 @@ func GenerateLinkAntiCensorship(user database.User, settings database.SystemSett
 
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 		user.UUID, serverIP, 2053, v.Encode(), url.QueryEscape(user.Username))
+}
+
+func GenerateLinkHysteria2(user database.User, serverIP string) string {
+	v := url.Values{}
+	v.Add("insecure", "1")
+
+	return fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s",
+		user.UUID, serverIP, 2055, v.Encode(), url.QueryEscape(user.Username))
 }
 
 // --- API Traffic Logic (gRPC V2Ray) ---

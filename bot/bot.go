@@ -56,9 +56,12 @@ func Start(token string, adminID int64) {
 	btnQR := connectMenu.Data("📷 QR код", "conn_qr")
 	btnLinkAC := connectMenu.Data("🛡 Антиблок ссылка", "conn_link_ac")
 	btnQRAC := connectMenu.Data("🛡 Антиблок QR", "conn_qr_ac")
+	btnLinkHy2 := connectMenu.Data("⚡ Hysteria2 ссылка", "conn_link_hy2")
+	btnQRHy2 := connectMenu.Data("⚡ Hysteria2 QR", "conn_qr_hy2")
 	connectMenu.Inline(
 		connectMenu.Row(btnLink, btnQR),
 		connectMenu.Row(btnLinkAC, btnQRAC),
+		connectMenu.Row(btnLinkHy2, btnQRHy2),
 	)
 
 	// --- Handlers ---
@@ -169,7 +172,7 @@ func Start(token string, adminID int64) {
 	})
 
 	b.Handle(&btnConnect, func(c tele.Context) error {
-		return c.Send("Как вы хотите получить настройки?\n\n🔗/📷 — стандартное подключение (порт 443)\n🛡 — антиблок подключение (порт 2053, HTTP/2)\n\nЕсли стандартное не работает — используйте антиблок.", connectMenu)
+		return c.Send("Как вы хотите получить настройки?\n\n🔗/📷 — стандартное (порт 443)\n🛡 — антиблок (порт 2053, HTTP/2)\n⚡ — Hysteria2 (порт 2055, UDP)\n\nЕсли одно не работает — пробуйте другое.", connectMenu)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_link"}, func(c tele.Context) error {
@@ -214,6 +217,25 @@ func Start(token string, adminID int64) {
 		return c.Send(photo)
 	})
 
+	b.Handle(&tele.Btn{Unique: "conn_link_hy2"}, func(c tele.Context) error {
+		user, _ := getUserAndSettings(c.Sender().ID)
+		link := service.GenerateLinkHysteria2(user, "49.13.201.110")
+		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
+	})
+
+	b.Handle(&tele.Btn{Unique: "conn_qr_hy2"}, func(c tele.Context) error {
+		user, _ := getUserAndSettings(c.Sender().ID)
+		link := service.GenerateLinkHysteria2(user, "49.13.201.110")
+
+		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
+		if err != nil {
+			return c.Send("❌ Ошибка генерации QR кода.")
+		}
+
+		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "⚡ Hysteria2 — сканируйте в Hiddify"}
+		return c.Send(photo)
+	})
+
 	b.Handle(&btnStatus, func(c tele.Context) error {
 		msg, rm := getStatusMsg(c.Sender().ID)
 		return c.Send(msg, tele.ModeMarkdown, rm)
@@ -252,9 +274,10 @@ func Start(token string, adminID int64) {
 4. Если нет: Configs -> "+" -> Import v2ray uri from clipboard.
 
 🛡 **Если VPN не работает (блокировки):**
-Используйте **Антиблок** ссылку/QR (кнопка "Подключиться" → "🛡 Антиблок").
-Это подключение через порт 2053 с HTTP/2 транспортом, которое обходит блокировки DPI.
-Добавьте антиблок профиль как второй — переключайтесь при необходимости.
+Попробуйте другие варианты подключения:
+• **🛡 Антиблок** — порт 2053, HTTP/2 транспорт, обходит DPI.
+• **⚡ Hysteria2** — порт 2055, UDP протокол, работает когда блокируют TCP.
+Добавьте все профили в Hiddify — переключайтесь при необходимости.
 
 ❓ Если возникли проблемы, пишите администратору.`
 
