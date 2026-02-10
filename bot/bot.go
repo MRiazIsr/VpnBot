@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 	"vpnbot/database"
 	"vpnbot/service"
@@ -94,12 +95,13 @@ func Start(token string, adminID int64) {
 		// Красивое имя пользователя в уведомлении админу
 		userLink := c.Sender().Username
 		if userLink == "" {
-			userLink = fmt.Sprintf("[%s](tg://user?id=%d)", c.Sender().FirstName, c.Sender().ID)
+			firstName := escapeMarkdown(c.Sender().FirstName)
+			userLink = fmt.Sprintf("[%s](tg://user?id=%d)", firstName, c.Sender().ID)
 		} else {
-			userLink = "@" + userLink
+			userLink = "@" + escapeMarkdown(userLink)
 		}
 
-		msg := fmt.Sprintf("🔔 **Новая заявка!**\nUser: %s\nID: `%d`", userLink, c.Sender().ID)
+		msg := fmt.Sprintf("🔔 *Новая заявка!*\nUser: %s\nID: `%d`", userLink, c.Sender().ID)
 
 		approveBtn := &tele.ReplyMarkup{}
 		btnApprove := approveBtn.Data("✅ Одобрить", "approve", fmt.Sprintf("%d", c.Sender().ID))
@@ -294,6 +296,16 @@ func parseInt(s string) int64 {
 	var i int64
 	fmt.Sscanf(s, "%d", &i)
 	return i
+}
+
+func escapeMarkdown(s string) string {
+	replacer := strings.NewReplacer(
+		"_", "\\_",
+		"*", "\\*",
+		"`", "\\`",
+		"[", "\\[",
+	)
+	return replacer.Replace(s)
 }
 
 func formatBytes(b int64) string {
