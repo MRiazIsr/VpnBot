@@ -53,18 +53,28 @@ type LogConfig struct {
 }
 
 type InboundConfig struct {
-	Type       string      `json:"type"`
-	Tag        string      `json:"tag"`
-	Listen     string      `json:"listen"`
-	ListenPort int         `json:"listen_port"`
-	Users      []VLessUser `json:"users,omitempty"`
-	TLS        *TLSConfig  `json:"tls,omitempty"`
+	Type       string           `json:"type"`
+	Tag        string           `json:"tag"`
+	Listen     string           `json:"listen"`
+	ListenPort int              `json:"listen_port"`
+	Users      []VLessUser      `json:"users,omitempty"`
+	TLS        *TLSConfig       `json:"tls,omitempty"`
+	Transport  *TransportConfig `json:"transport,omitempty"`
+	Multiplex  *MultiplexConfig `json:"multiplex,omitempty"`
+}
+
+type TransportConfig struct {
+	Type string `json:"type"`
+}
+
+type MultiplexConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 type VLessUser struct {
 	Name string `json:"name"`
 	UUID string `json:"uuid"`
-	Flow string `json:"flow"`
+	Flow string `json:"flow,omitempty"`
 }
 
 type TLSConfig struct {
@@ -100,14 +110,19 @@ func GenerateAndReload() error {
 	var settings database.SystemSettings
 	database.DB.First(&settings)
 
-	vlessUsers := []VLessUser{}
+	legacyUsers := []VLessUser{}
+	newUsers := []VLessUser{}
 	userNames := []string{}
 
 	for _, u := range users {
-		vlessUsers = append(vlessUsers, VLessUser{
+		legacyUsers = append(legacyUsers, VLessUser{
 			Name: u.Username,
 			UUID: u.UUID,
 			Flow: "xtls-rprx-vision",
+		})
+		newUsers = append(newUsers, VLessUser{
+			Name: u.Username,
+			UUID: u.UUID,
 		})
 		userNames = append(userNames, u.Username)
 	}
@@ -128,7 +143,7 @@ func GenerateAndReload() error {
 				Listen: ApiAddr,
 				Stats: StatsConfig{
 					Enabled:  true,
-					Inbounds: []string{"vless-in"},
+					Inbounds: []string{"vless-in", "vless-in-h2"},
 					Users:    userNames,
 				},
 			},
@@ -139,7 +154,7 @@ func GenerateAndReload() error {
 				Tag:        "vless-in",
 				Listen:     "::",
 				ListenPort: settings.ListenPort,
-				Users:      vlessUsers,
+				Users:      legacyUsers,
 				TLS: &TLSConfig{
 					Enabled:    true,
 					ServerName: settings.ServerName,
@@ -154,6 +169,29 @@ func GenerateAndReload() error {
 						MaxTimeDifference: "1m",
 					},
 				},
+			},
+			{
+				Type:       "vless",
+				Tag:        "vless-in-h2",
+				Listen:     "::",
+				ListenPort: 2053,
+				Users:      newUsers,
+				TLS: &TLSConfig{
+					Enabled:    true,
+					ServerName: "api.yandex.ru",
+					Reality: &RealityConfig{
+						Enabled:    true,
+						PrivateKey: settings.RealityPrivateKey,
+						ShortID:    shortIDs,
+						Handshake: ServerEP{
+							Server:     "api.yandex.ru",
+							ServerPort: 443,
+						},
+						MaxTimeDifference: "1m",
+					},
+				},
+				Transport: &TransportConfig{Type: "http"},
+				Multiplex: &MultiplexConfig{Enabled: true},
 			},
 		},
 		Outbounds: []OutboundConfig{
@@ -202,6 +240,25 @@ func GenerateLink(user database.User, settings database.SystemSettings, serverIP
 
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 		user.UUID, serverIP, settings.ListenPort, v.Encode(), url.QueryEscape(user.Username))
+}
+
+func GenerateLinkAntiCensorship(user database.User, settings database.SystemSettings, serverIP string) string {
+	v := url.Values{}
+	v.Add("security", "reality")
+	v.Add("encryption", "none")
+	v.Add("pbk", settings.RealityPublicKey)
+	v.Add("fp", "chrome")
+	v.Add("type", "http")
+	v.Add("sni", "api.yandex.ru")
+
+	var shortIDs []string
+	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
+	if len(shortIDs) > 0 {
+		v.Add("sid", shortIDs[0])
+	}
+
+	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+		user.UUID, serverIP, 2053, v.Encode(), url.QueryEscape(user.Username))
 }
 
 // --- API Traffic Logic (gRPC V2Ray) ---

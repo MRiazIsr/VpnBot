@@ -54,8 +54,11 @@ func Start(token string, adminID int64) {
 	connectMenu := &tele.ReplyMarkup{}
 	btnLink := connectMenu.Data("🔗 Ссылка", "conn_link")
 	btnQR := connectMenu.Data("📷 QR код", "conn_qr")
+	btnLinkAC := connectMenu.Data("🛡 Антиблок ссылка", "conn_link_ac")
+	btnQRAC := connectMenu.Data("🛡 Антиблок QR", "conn_qr_ac")
 	connectMenu.Inline(
 		connectMenu.Row(btnLink, btnQR),
+		connectMenu.Row(btnLinkAC, btnQRAC),
 	)
 
 	// --- Handlers ---
@@ -166,7 +169,7 @@ func Start(token string, adminID int64) {
 	})
 
 	b.Handle(&btnConnect, func(c tele.Context) error {
-		return c.Send("Как вы хотите получить настройки?", connectMenu)
+		return c.Send("Как вы хотите получить настройки?\n\n🔗/📷 — стандартное подключение (порт 443)\n🛡 — антиблок подключение (порт 2053, HTTP/2)\n\nЕсли стандартное не работает — используйте антиблок.", connectMenu)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_link"}, func(c tele.Context) error {
@@ -189,6 +192,25 @@ func Start(token string, adminID int64) {
 		}
 
 		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "Сканируйте этот код в приложении Hiddify"}
+		return c.Send(photo)
+	})
+
+	b.Handle(&tele.Btn{Unique: "conn_link_ac"}, func(c tele.Context) error {
+		user, settings := getUserAndSettings(c.Sender().ID)
+		link := service.GenerateLinkAntiCensorship(user, settings, "49.13.201.110")
+		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
+	})
+
+	b.Handle(&tele.Btn{Unique: "conn_qr_ac"}, func(c tele.Context) error {
+		user, settings := getUserAndSettings(c.Sender().ID)
+		link := service.GenerateLinkAntiCensorship(user, settings, "49.13.201.110")
+
+		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
+		if err != nil {
+			return c.Send("❌ Ошибка генерации QR кода.")
+		}
+
+		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "🛡 Антиблок — сканируйте в Hiddify"}
 		return c.Send(photo)
 	})
 
@@ -229,9 +251,40 @@ func Start(token string, adminID int64) {
 3. Откройте приложение — оно само предложит добавить конфиг.
 4. Если нет: Configs -> "+" -> Import v2ray uri from clipboard.
 
+🛡 **Если VPN не работает (блокировки):**
+Используйте **Антиблок** ссылку/QR (кнопка "Подключиться" → "🛡 Антиблок").
+Это подключение через порт 2053 с HTTP/2 транспортом, которое обходит блокировки DPI.
+Добавьте антиблок профиль как второй — переключайтесь при необходимости.
+
 ❓ Если возникли проблемы, пишите администратору.`
 
 		return c.Send(helpMsg, tele.ModeMarkdown)
+	})
+
+	b.Handle("/broadcast", func(c tele.Context) error {
+		if c.Sender().ID != AdminID && c.Sender().ID != 124343839 {
+			return c.Send("⛔ Только администратор может отправлять рассылку.")
+		}
+
+		text := strings.TrimSpace(strings.TrimPrefix(c.Text(), "/broadcast"))
+		if text == "" {
+			return c.Send("Использование: `/broadcast <текст сообщения>`", tele.ModeMarkdown)
+		}
+
+		var users []database.User
+		database.DB.Where("telegram_id > 0").Find(&users)
+
+		sent, failed := 0, 0
+		for _, u := range users {
+			_, err := b.Send(&tele.User{ID: u.TelegramID}, text)
+			if err != nil {
+				failed++
+			} else {
+				sent++
+			}
+		}
+
+		return c.Send(fmt.Sprintf("📨 Рассылка завершена.\n✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed))
 	})
 
 	// Фоновая задача
