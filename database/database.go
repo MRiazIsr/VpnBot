@@ -47,6 +47,11 @@ type SystemSettings struct {
 	RealityShortIDs   string `json:"reality_short_ids"`
 	ServerName        string `json:"server_name"`
 	DestAddr          string `json:"dest_addr"`
+	ServerDomain      string `json:"server_domain"`
+	BypassDomain      string `json:"bypass_domain"`
+	GrpcServerName    string `json:"grpc_server_name"`
+	AlternativeSNIs   string `json:"alternative_snis"`
+	Fingerprint       string `json:"fingerprint"`
 }
 
 type ConnectionLog struct {
@@ -77,13 +82,19 @@ func Init(path string) {
 	var settings SystemSettings
 	if result := DB.First(&settings); result.Error != nil {
 		log.Println("Settings not found, initializing from config...")
+		// WARNING: These are default dev values. Override via admin panel or DB.
 		DB.Create(&SystemSettings{
-			ListenPort:        443,
+			ListenPort:        8443,
 			RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
 			RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
 			RealityShortIDs:   `["207fc82a9f9e741f"]`,
-			ServerName:        "www.max.ru",
-			DestAddr:          "www.max.ru:443",
+			ServerName:        "rbc.ru",
+			DestAddr:          "rbc.ru:443",
+			ServerDomain:      "",
+			BypassDomain:      "",
+			GrpcServerName:    "tradingview.com",
+			AlternativeSNIs:   `["rbc.ru","tradingview.com","sun6-21.userapi.com"]`,
+			Fingerprint:       "random",
 		})
 	}
 

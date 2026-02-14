@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -79,6 +80,11 @@ func main() {
 
 	botToken := os.Getenv("BOT_TOKEN")
 	adminID := int64(124343839)
+	if envAdminID := os.Getenv("ADMIN_ID"); envAdminID != "" {
+		if parsed, err := strconv.ParseInt(envAdminID, 10, 64); err == nil {
+			adminID = parsed
+		}
+	}
 
 	if botToken != "" {
 		go bot.Start(botToken, adminID)
@@ -238,12 +244,93 @@ func main() {
 
 	r.GET("/sub/:token", func(c *gin.Context) {
 		token := c.Param("token")
+
+		// 1. Найти пользователя по subscription_token
 		var user database.User
 		if err := database.DB.Where("subscription_token = ?", token).First(&user).Error; err != nil {
-			c.String(404, "Invalid token")
+			c.String(404, "Not found")
 			return
 		}
-		c.String(200, "TODO: Return Base64 VLESS config list")
+
+		// 2. Проверить статус
+		if user.Status != "active" {
+			c.String(404, "Not found")
+			return
+		}
+
+		// 3. Загрузить SystemSettings
+		var settings database.SystemSettings
+		database.DB.First(&settings)
+
+		// 4. Определить serverIP
+		serverIP := os.Getenv("SERVER_IP")
+		if serverIP == "" {
+			serverIP = "49.13.201.110"
+		}
+
+		// 5. Собрать массив ссылок
+		mainAddr := serverIP
+		if settings.ServerDomain != "" {
+			mainAddr = settings.ServerDomain
+		}
+
+		links := []string{
+			service.GenerateLink(user, settings, mainAddr),
+			service.GenerateLinkAntiCensorship(user, settings, serverIP),
+			service.GenerateLinkGRPC(user, settings, serverIP),
+			service.GenerateLinkHysteria2(user, serverIP),
+		}
+
+		// 6. Склеить через \n и закодировать в base64
+		body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
+
+		// 7. Вернуть с заголовками
+		c.Header("Content-Type", "text/plain")
+		c.Header("Profile-Update-Interval", "6")
+		c.Header("Subscription-Userinfo", fmt.Sprintf("upload=0; download=%d; total=%d", user.TrafficUsed, user.TrafficLimit))
+		c.String(200, body)
+	})
+
+	r.GET("/sub/:token/bypass", func(c *gin.Context) {
+		token := c.Param("token")
+
+		var user database.User
+		if err := database.DB.Where("subscription_token = ?", token).First(&user).Error; err != nil {
+			c.String(404, "Not found")
+			return
+		}
+
+		if user.Status != "active" {
+			c.String(404, "Not found")
+			return
+		}
+
+		var settings database.SystemSettings
+		database.DB.First(&settings)
+
+		serverIP := os.Getenv("SERVER_IP")
+		if serverIP == "" {
+			serverIP = "49.13.201.110"
+		}
+
+		bypassAddr := settings.BypassDomain
+		if bypassAddr == "" {
+			bypassAddr = serverIP
+		}
+
+		links := []string{
+			service.GenerateLinkBypass(user, settings, bypassAddr),
+			service.GenerateLinkAntiCensorship(user, settings, serverIP),
+			service.GenerateLinkGRPC(user, settings, serverIP),
+			service.GenerateLinkHysteria2(user, serverIP),
+		}
+
+		body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
+
+		c.Header("Content-Type", "text/plain")
+		c.Header("Profile-Update-Interval", "6")
+		c.Header("Subscription-Userinfo", fmt.Sprintf("upload=0; download=%d; total=%d", user.TrafficUsed, user.TrafficLimit))
+		c.String(200, body)
 	})
 
 	log.Println("Server starting on :8085")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 	"vpnbot/database"
@@ -15,12 +16,19 @@ import (
 )
 
 var AdminID int64 = 0
+var ServerIP string
 
 // Делаем переменную Bot глобальной, чтобы main.go мог к ней обращаться
 var Bot *tele.Bot
 
 func Start(token string, adminID int64) {
 	AdminID = adminID
+
+	ServerIP = os.Getenv("SERVER_IP")
+	if ServerIP == "" {
+		ServerIP = ServerIP
+	}
+
 	pref := tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -60,11 +68,14 @@ func Start(token string, adminID int64) {
 	btnQRHy2 := connectMenu.Data("⚡ Hysteria2 QR", "conn_qr_hy2")
 	btnLinkGRPC := connectMenu.Data("📡 gRPC ссылка", "conn_link_grpc")
 	btnQRGRPC := connectMenu.Data("📡 gRPC QR", "conn_qr_grpc")
+	btnLinkBypass := connectMenu.Data("🛡 Обход ссылка", "conn_link_bypass")
+	btnQRBypass := connectMenu.Data("🛡 Обход QR", "conn_qr_bypass")
 	connectMenu.Inline(
 		connectMenu.Row(btnLink, btnQR),
 		connectMenu.Row(btnLinkAC, btnQRAC),
 		connectMenu.Row(btnLinkHy2, btnQRHy2),
 		connectMenu.Row(btnLinkGRPC, btnQRGRPC),
+		connectMenu.Row(btnLinkBypass, btnQRBypass),
 	)
 
 	// --- Handlers ---
@@ -75,7 +86,7 @@ func Start(token string, adminID int64) {
 
 		if result.Error != nil {
 			var existingUser database.User
-			if c.Sender().ID == AdminID || c.Sender().ID == 124343839 {
+			if c.Sender().ID == AdminID {
 				if err := database.DB.Where("username = 'MRiaz' AND telegram_id = 0").First(&existingUser).Error; err == nil {
 					existingUser.TelegramID = c.Sender().ID
 					database.DB.Save(&existingUser)
@@ -175,12 +186,14 @@ func Start(token string, adminID int64) {
 	})
 
 	b.Handle(&btnConnect, func(c tele.Context) error {
-		return c.Send("Выберите тип подключения:\n\n🔗 — стандарт (443, TCP)\n🛡 — антиблок (2053, HTTP/2)\n⚡ — Hysteria2 (2055, UDP)\n📡 — gRPC (2054, TCP)\n\nПробуйте разные — зависит от провайдера.", connectMenu)
+		_, settings := getUserAndSettings(c.Sender().ID)
+		text := fmt.Sprintf("Выберите тип подключения:\n\n🔗 — стандарт (%d, TCP)\n🛡 — антиблок (2053, HTTP/2)\n⚡ — Hysteria2 (2055, UDP)\n📡 — gRPC (2054, TCP)\n🛡 Обход — через трастовый домен, устойчив к блокировкам\n\nПробуйте разные — зависит от провайдера.", settings.ListenPort)
+		return c.Send(text, connectMenu)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_link"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLink(user, settings, "49.13.201.110")
+		link := service.GenerateLink(user, settings, ServerIP)
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
 	})
 
@@ -190,7 +203,7 @@ func Start(token string, adminID int64) {
 
 	b.Handle(&tele.Btn{Unique: "conn_qr"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLink(user, settings, "49.13.201.110")
+		link := service.GenerateLink(user, settings, ServerIP)
 
 		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
 		if err != nil {
@@ -203,13 +216,13 @@ func Start(token string, adminID int64) {
 
 	b.Handle(&tele.Btn{Unique: "conn_link_ac"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLinkAntiCensorship(user, settings, "49.13.201.110")
+		link := service.GenerateLinkAntiCensorship(user, settings, ServerIP)
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_qr_ac"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLinkAntiCensorship(user, settings, "49.13.201.110")
+		link := service.GenerateLinkAntiCensorship(user, settings, ServerIP)
 
 		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
 		if err != nil {
@@ -222,13 +235,13 @@ func Start(token string, adminID int64) {
 
 	b.Handle(&tele.Btn{Unique: "conn_link_hy2"}, func(c tele.Context) error {
 		user, _ := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLinkHysteria2(user, "49.13.201.110")
+		link := service.GenerateLinkHysteria2(user, ServerIP)
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_qr_hy2"}, func(c tele.Context) error {
 		user, _ := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLinkHysteria2(user, "49.13.201.110")
+		link := service.GenerateLinkHysteria2(user, ServerIP)
 
 		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
 		if err != nil {
@@ -241,13 +254,13 @@ func Start(token string, adminID int64) {
 
 	b.Handle(&tele.Btn{Unique: "conn_link_grpc"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLinkGRPC(user, settings, "49.13.201.110")
+		link := service.GenerateLinkGRPC(user, settings, ServerIP)
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_qr_grpc"}, func(c tele.Context) error {
 		user, settings := getUserAndSettings(c.Sender().ID)
-		link := service.GenerateLinkGRPC(user, settings, "49.13.201.110")
+		link := service.GenerateLinkGRPC(user, settings, ServerIP)
 
 		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
 		if err != nil {
@@ -255,6 +268,33 @@ func Start(token string, adminID int64) {
 		}
 
 		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "📡 gRPC — сканируйте в Hiddify"}
+		return c.Send(photo)
+	})
+
+	b.Handle(&tele.Btn{Unique: "conn_link_bypass"}, func(c tele.Context) error {
+		user, settings := getUserAndSettings(c.Sender().ID)
+		bypassDomain := settings.BypassDomain
+		if bypassDomain == "" {
+			return c.Send("⚠️ Обходной режим не настроен. Администратору нужно добавить трастовый домен.")
+		}
+		link := service.GenerateLinkBypass(user, settings, bypassDomain)
+		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
+	})
+
+	b.Handle(&tele.Btn{Unique: "conn_qr_bypass"}, func(c tele.Context) error {
+		user, settings := getUserAndSettings(c.Sender().ID)
+		bypassDomain := settings.BypassDomain
+		if bypassDomain == "" {
+			return c.Send("⚠️ Обходной режим не настроен. Администратору нужно добавить трастовый домен.")
+		}
+		link := service.GenerateLinkBypass(user, settings, bypassDomain)
+
+		qr, err := qrcode.Encode(link, qrcode.Medium, 256)
+		if err != nil {
+			return c.Send("❌ Ошибка генерации QR кода.")
+		}
+
+		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "🛡 Обход — сканируйте в Hiddify"}
 		return c.Send(photo)
 	})
 
@@ -308,7 +348,7 @@ func Start(token string, adminID int64) {
 	})
 
 	b.Handle("/broadcast", func(c tele.Context) error {
-		if c.Sender().ID != AdminID && c.Sender().ID != 124343839 {
+		if c.Sender().ID != AdminID {
 			return c.Send("⛔ Только администратор может отправлять рассылку.")
 		}
 
