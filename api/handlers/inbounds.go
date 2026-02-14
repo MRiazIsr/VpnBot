@@ -27,6 +27,102 @@ func trimInboundStrings(input *database.InboundConfig) {
 	input.Fingerprint = strings.TrimSpace(input.Fingerprint)
 }
 
+// validateInboundCombination проверяет совместимость полей инбаунда.
+// Возвращает текст ошибки или пустую строку если всё ок.
+func validateInboundCombination(input *database.InboundConfig) string {
+	// hysteria2: только certificate, user_type=hy2, без transport и flow
+	if input.Protocol == "hysteria2" {
+		if input.TLSType != "" && input.TLSType != "certificate" {
+			return "Hysteria2 requires tls_type 'certificate'"
+		}
+		if input.UserType != "" && input.UserType != "hy2" {
+			return "Hysteria2 requires user_type 'hy2'"
+		}
+		if input.Transport != "" {
+			return "Hysteria2 does not support transport"
+		}
+		if input.Flow != "" {
+			return "Hysteria2 does not support flow"
+		}
+	}
+
+	// flow=xtls-rprx-vision только с TCP (transport пустой) и user_type=legacy
+	if input.Flow != "" {
+		if input.Transport != "" {
+			return "Flow (XTLS-Vision) only works with TCP (empty transport)"
+		}
+		if input.UserType != "" && input.UserType != "legacy" {
+			return "Flow (XTLS-Vision) requires user_type 'legacy'"
+		}
+	}
+
+	// transport != "" требует user_type=new (без flow)
+	if input.Transport != "" {
+		if input.UserType == "legacy" {
+			return "Transport '" + input.Transport + "' requires user_type 'new' (legacy adds flow which is incompatible)"
+		}
+	}
+
+	return ""
+}
+
+func GetInboundRules() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"transports": []gin.H{
+				{
+					"value":       "",
+					"label":       "TCP (прямое подключение)",
+					"description": "Стандартный режим. Поддерживает XTLS-Vision (flow). Требует user_type=legacy.",
+					"user_type":   "legacy",
+					"flow":        "xtls-rprx-vision",
+				},
+				{
+					"value":       "http",
+					"label":       "HTTP/2",
+					"description": "Мультиплексирование через HTTP/2. Может блокироваться ML-DPI. Требует user_type=new.",
+					"user_type":   "new",
+					"flow":        "",
+				},
+				{
+					"value":       "httpupgrade",
+					"label":       "HTTPUpgrade (HTTP/1.1)",
+					"description": "HTTP/1.1 Upgrade — обходит ML-детекцию РКН, которая нацелена на HTTP/2. Рекомендуется при блокировках. Требует user_type=new. Поле service_name = path.",
+					"user_type":   "new",
+					"flow":        "",
+				},
+				{
+					"value":       "grpc",
+					"label":       "gRPC",
+					"description": "Маскировка под gRPC API. Требует user_type=new. Поле service_name = имя сервиса.",
+					"user_type":   "new",
+					"flow":        "",
+				},
+				{
+					"value":       "ws",
+					"label":       "WebSocket",
+					"description": "HTTP/1.1 WebSocket. Менее защищён чем httpupgrade. Требует user_type=new. Поле service_name = path.",
+					"user_type":   "new",
+					"flow":        "",
+				},
+			},
+			"protocols": []gin.H{
+				{
+					"value":     "vless",
+					"label":     "VLESS",
+					"tls_types": []string{"reality", "certificate"},
+				},
+				{
+					"value":     "hysteria2",
+					"label":     "Hysteria2",
+					"tls_types": []string{"certificate"},
+					"forced":    gin.H{"user_type": "hy2", "transport": "", "flow": ""},
+				},
+			},
+		})
+	}
+}
+
 func GetInbounds() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var inbounds []database.InboundConfig
@@ -52,6 +148,11 @@ func CreateInbound() gin.HandlerFunc {
 		}
 		if input.Protocol != "vless" && input.Protocol != "hysteria2" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless' or 'hysteria2'"})
+			return
+		}
+
+		if err := validateInboundCombination(&input); err != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err})
 			return
 		}
 
@@ -114,6 +215,11 @@ func UpdateInbound() gin.HandlerFunc {
 
 		if input.Protocol != "" && input.Protocol != "vless" && input.Protocol != "hysteria2" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless' or 'hysteria2'"})
+			return
+		}
+
+		if err := validateInboundCombination(&input); err != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err})
 			return
 		}
 
