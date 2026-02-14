@@ -51,6 +51,16 @@ func CreateInbound() gin.HandlerFunc {
 			}
 		}
 
+		// Auto-copy Reality keys from existing inbound if not provided
+		if input.TLSType == "reality" && input.RealityPrivateKey == "" {
+			var donor database.InboundConfig
+			if database.DB.Where("tls_type = ? AND reality_private_key != ''", "reality").First(&donor).Error == nil {
+				input.RealityPrivateKey = donor.RealityPrivateKey
+				input.RealityPublicKey = donor.RealityPublicKey
+				input.RealityShortIDs = donor.RealityShortIDs
+			}
+		}
+
 		input.IsBuiltin = false
 		if err := database.DB.Create(&input).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create inbound"})
