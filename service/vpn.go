@@ -68,6 +68,7 @@ type SingboxInbound struct {
 type TransportConfig struct {
 	Type        string `json:"type"`
 	ServiceName string `json:"service_name,omitempty"`
+	Path        string `json:"path,omitempty"`
 }
 
 type MultiplexConfig struct {
@@ -202,8 +203,11 @@ func buildSingboxInbound(ib database.InboundConfig, users []database.User) Singb
 	// Transport
 	if ib.Transport != "" {
 		sb.Transport = &TransportConfig{Type: ib.Transport}
-		if ib.ServiceName != "" {
+		switch ib.Transport {
+		case "grpc":
 			sb.Transport.ServiceName = ib.ServiceName
+		case "httpupgrade", "ws":
+			sb.Transport.Path = ib.ServiceName
 		}
 	}
 
@@ -302,6 +306,16 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 			v.Add("type", "grpc")
 			if ib.ServiceName != "" {
 				v.Add("serviceName", ib.ServiceName)
+			}
+		case "httpupgrade":
+			v.Add("type", "httpupgrade")
+			if ib.ServiceName != "" {
+				v.Add("path", ib.ServiceName)
+			}
+		case "ws":
+			v.Add("type", "ws")
+			if ib.ServiceName != "" {
+				v.Add("path", ib.ServiceName)
 			}
 		default:
 			v.Add("type", "tcp")
