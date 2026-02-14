@@ -62,6 +62,30 @@ type ConnectionLog struct {
 	Reason    string    `json:"reason"`
 }
 
+type InboundConfig struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Tag         string `gorm:"uniqueIndex;not null" json:"tag"`
+	DisplayName string `json:"display_name"`
+	Protocol    string `json:"protocol"`    // "vless" | "hysteria2"
+	ListenPort  int    `json:"listen_port"` // 0 = settings.ListenPort
+	TLSType     string `json:"tls_type"`    // "reality" | "certificate"
+	SNI         string `json:"sni"`         // "" = fallback from settings
+	CertPath    string `json:"cert_path"`
+	KeyPath     string `json:"key_path"`
+	Transport   string `json:"transport"`    // "" (tcp) | "http" | "grpc"
+	ServiceName string `json:"service_name"`
+	UserType    string `json:"user_type"` // "legacy" | "new" | "hy2"
+	Flow        string `json:"flow"`      // "xtls-rprx-vision" | ""
+	Multiplex   bool   `json:"multiplex"`
+	Enabled     bool   `gorm:"default:true" json:"enabled"`
+	IsBuiltin   bool   `gorm:"default:false" json:"is_builtin"`
+	SortOrder   int    `gorm:"default:0" json:"sort_order"`
+}
+
 // --- Init ---
 
 func Init(path string) {
@@ -73,7 +97,7 @@ func Init(path string) {
 
 	// Миграция схемы
 	// GORM автоматически добавит новую колонку, если её нет
-	err = DB.AutoMigrate(&User{}, &SystemSettings{}, &ConnectionLog{})
+	err = DB.AutoMigrate(&User{}, &SystemSettings{}, &ConnectionLog{}, &InboundConfig{})
 	if err != nil {
 		log.Fatal("Migration failed:", err)
 	}
@@ -110,6 +134,80 @@ func Init(path string) {
 			TrafficLimit:      0, // Безлимит для админа
 			SubscriptionToken: GenerateToken(),
 		})
+	}
+
+	// 3. Seed builtin inbound configs
+	var inboundCount int64
+	DB.Model(&InboundConfig{}).Count(&inboundCount)
+	if inboundCount == 0 {
+		log.Println("Seeding builtin inbound configs...")
+		builtins := []InboundConfig{
+			{
+				Tag:         "vless-in",
+				DisplayName: "VLESS Reality (TCP)",
+				Protocol:    "vless",
+				ListenPort:  0, // uses settings.ListenPort
+				TLSType:     "reality",
+				SNI:         "", // uses settings.ServerName
+				Transport:   "",
+				UserType:    "legacy",
+				Flow:        "xtls-rprx-vision",
+				Multiplex:   false,
+				Enabled:     true,
+				IsBuiltin:   true,
+				SortOrder:   0,
+			},
+			{
+				Tag:         "vless-in-h2",
+				DisplayName: "VLESS Reality (HTTP/2)",
+				Protocol:    "vless",
+				ListenPort:  2053,
+				TLSType:     "reality",
+				SNI:         "api.yandex.ru",
+				Transport:   "http",
+				UserType:    "new",
+				Flow:        "",
+				Multiplex:   true,
+				Enabled:     true,
+				IsBuiltin:   true,
+				SortOrder:   1,
+			},
+			{
+				Tag:         "hy2-in",
+				DisplayName: "Hysteria2",
+				Protocol:    "hysteria2",
+				ListenPort:  2055,
+				TLSType:     "certificate",
+				CertPath:    "/etc/sing-box/hy2-cert.pem",
+				KeyPath:     "/etc/sing-box/hy2-key.pem",
+				Transport:   "",
+				UserType:    "hy2",
+				Flow:        "",
+				Multiplex:   false,
+				Enabled:     true,
+				IsBuiltin:   true,
+				SortOrder:   2,
+			},
+			{
+				Tag:         "vless-in-grpc",
+				DisplayName: "VLESS Reality (gRPC)",
+				Protocol:    "vless",
+				ListenPort:  2054,
+				TLSType:     "reality",
+				SNI:         "", // uses settings.GrpcServerName
+				Transport:   "grpc",
+				ServiceName: "grpc-vpn",
+				UserType:    "new",
+				Flow:        "",
+				Multiplex:   false,
+				Enabled:     true,
+				IsBuiltin:   true,
+				SortOrder:   3,
+			},
+		}
+		for _, ib := range builtins {
+			DB.Create(&ib)
+		}
 	}
 }
 

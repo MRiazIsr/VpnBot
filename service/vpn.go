@@ -29,7 +29,7 @@ const ApiAddr = "127.0.0.1:10000" // Порт для gRPC API
 type SingBoxConfig struct {
 	Log          LogConfig           `json:"log"`
 	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
-	Inbounds     []InboundConfig     `json:"inbounds"`
+	Inbounds     []SingboxInbound     `json:"inbounds"`
 	Outbounds    []OutboundConfig    `json:"outbounds"`
 }
 
@@ -54,7 +54,7 @@ type LogConfig struct {
 	Output    string `json:"output,omitempty"`
 }
 
-type InboundConfig struct {
+type SingboxInbound struct {
 	Type       string           `json:"type"`
 	Tag        string           `json:"tag"`
 	Listen     string           `json:"listen"`
@@ -113,6 +113,128 @@ type OutboundConfig struct {
 
 // --- Logic ---
 
+func buildLegacyUsers(users []database.User) []VLessUser {
+	result := []VLessUser{}
+	for _, u := range users {
+		result = append(result, VLessUser{
+			Name: u.Username,
+			UUID: u.UUID,
+			Flow: "xtls-rprx-vision",
+		})
+	}
+	return result
+}
+
+func buildNewUsers(users []database.User) []VLessUser {
+	result := []VLessUser{}
+	for _, u := range users {
+		result = append(result, VLessUser{
+			Name: u.Username,
+			UUID: u.UUID,
+		})
+	}
+	return result
+}
+
+func buildHy2Users(users []database.User) []Hysteria2User {
+	result := []Hysteria2User{}
+	for _, u := range users {
+		result = append(result, Hysteria2User{
+			Name:     u.Username,
+			Password: u.UUID,
+		})
+	}
+	return result
+}
+
+func buildUserNames(users []database.User) []string {
+	result := []string{}
+	for _, u := range users {
+		result = append(result, u.Username)
+	}
+	return result
+}
+
+func resolveSNI(ib database.InboundConfig, settings database.SystemSettings) string {
+	if ib.SNI != "" {
+		return ib.SNI
+	}
+	if ib.Transport == "grpc" {
+		return GetGrpcSNI(settings)
+	}
+	return settings.ServerName
+}
+
+func resolveListenPort(ib database.InboundConfig, settings database.SystemSettings) int {
+	if ib.ListenPort != 0 {
+		return ib.ListenPort
+	}
+	return settings.ListenPort
+}
+
+func buildSingboxInbound(ib database.InboundConfig, settings database.SystemSettings, shortIDs []string, users []database.User) SingboxInbound {
+	var ibUsers interface{}
+	switch ib.UserType {
+	case "legacy":
+		ibUsers = buildLegacyUsers(users)
+	case "new":
+		ibUsers = buildNewUsers(users)
+	case "hy2":
+		ibUsers = buildHy2Users(users)
+	}
+
+	sni := resolveSNI(ib, settings)
+	port := resolveListenPort(ib, settings)
+
+	sb := SingboxInbound{
+		Type:       ib.Protocol,
+		Tag:        ib.Tag,
+		Listen:     "::",
+		ListenPort: port,
+		Users:      ibUsers,
+	}
+
+	// TLS
+	switch ib.TLSType {
+	case "reality":
+		sb.TLS = &TLSConfig{
+			Enabled:    true,
+			ServerName: sni,
+			Reality: &RealityConfig{
+				Enabled:    true,
+				PrivateKey: settings.RealityPrivateKey,
+				ShortID:    shortIDs,
+				Handshake: ServerEP{
+					Server:     sni,
+					ServerPort: 443,
+				},
+				MaxTimeDifference: "1m",
+			},
+		}
+	case "certificate":
+		sb.TLS = &TLSConfig{
+			Enabled:         true,
+			CertificatePath: ib.CertPath,
+			KeyPath:         ib.KeyPath,
+		}
+	}
+
+	// Transport
+	if ib.Transport != "" {
+		sb.Transport = &TransportConfig{Type: ib.Transport}
+		if ib.ServiceName != "" {
+			sb.Transport.ServiceName = ib.ServiceName
+		}
+	}
+
+	// Multiplex
+	if ib.Multiplex {
+		sb.Multiplex = &MultiplexConfig{Enabled: true}
+	}
+
+	return sb
+}
+
 func GenerateAndReload() error {
 	var users []database.User
 	database.DB.Where("status = ?", "active").Find(&users)
@@ -120,31 +242,20 @@ func GenerateAndReload() error {
 	var settings database.SystemSettings
 	database.DB.First(&settings)
 
-	legacyUsers := []VLessUser{}
-	newUsers := []VLessUser{}
-	hy2Users := []Hysteria2User{}
-	userNames := []string{}
-
-	for _, u := range users {
-		legacyUsers = append(legacyUsers, VLessUser{
-			Name: u.Username,
-			UUID: u.UUID,
-			Flow: "xtls-rprx-vision",
-		})
-		newUsers = append(newUsers, VLessUser{
-			Name: u.Username,
-			UUID: u.UUID,
-		})
-		hy2Users = append(hy2Users, Hysteria2User{
-			Name:     u.Username,
-			Password: u.UUID,
-		})
-		userNames = append(userNames, u.Username)
-	}
-
 	var shortIDs []string
 	if err := json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs); err != nil {
 		shortIDs = []string{"207fc82a9f9e741f"}
+	}
+
+	// Load enabled inbound configs from DB
+	var inbounds []database.InboundConfig
+	database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
+
+	singboxInbounds := []SingboxInbound{}
+	inboundTags := []string{}
+	for _, ib := range inbounds {
+		singboxInbounds = append(singboxInbounds, buildSingboxInbound(ib, settings, shortIDs, users))
+		inboundTags = append(inboundTags, ib.Tag)
 	}
 
 	cfg := SingBoxConfig{
@@ -158,91 +269,12 @@ func GenerateAndReload() error {
 				Listen: ApiAddr,
 				Stats: StatsConfig{
 					Enabled:  true,
-					Inbounds: []string{"vless-in", "vless-in-h2", "hy2-in", "vless-in-grpc"},
-					Users:    userNames,
+					Inbounds: inboundTags,
+					Users:    buildUserNames(users),
 				},
 			},
 		},
-		Inbounds: []InboundConfig{
-			{
-				Type:       "vless",
-				Tag:        "vless-in",
-				Listen:     "::",
-				ListenPort: settings.ListenPort,
-				Users:      legacyUsers,
-				TLS: &TLSConfig{
-					Enabled:    true,
-					ServerName: settings.ServerName,
-					Reality: &RealityConfig{
-						Enabled:    true,
-						PrivateKey: settings.RealityPrivateKey,
-						ShortID:    shortIDs,
-						Handshake: ServerEP{
-							Server:     settings.ServerName,
-							ServerPort: 443,
-						},
-						MaxTimeDifference: "1m",
-					},
-				},
-			},
-			{
-				Type:       "vless",
-				Tag:        "vless-in-h2",
-				Listen:     "::",
-				ListenPort: 2053,
-				Users:      newUsers,
-				TLS: &TLSConfig{
-					Enabled:    true,
-					ServerName: "api.yandex.ru",
-					Reality: &RealityConfig{
-						Enabled:    true,
-						PrivateKey: settings.RealityPrivateKey,
-						ShortID:    shortIDs,
-						Handshake: ServerEP{
-							Server:     "api.yandex.ru",
-							ServerPort: 443,
-						},
-						MaxTimeDifference: "1m",
-					},
-				},
-				Transport: &TransportConfig{Type: "http"},
-				Multiplex: &MultiplexConfig{Enabled: true},
-			},
-			{
-				Type:       "hysteria2",
-				Tag:        "hy2-in",
-				Listen:     "::",
-				ListenPort: 2055,
-				Users:      hy2Users,
-				TLS: &TLSConfig{
-					Enabled:         true,
-					CertificatePath: "/etc/sing-box/hy2-cert.pem",
-					KeyPath:         "/etc/sing-box/hy2-key.pem",
-				},
-			},
-			{
-				Type:       "vless",
-				Tag:        "vless-in-grpc",
-				Listen:     "::",
-				ListenPort: 2054,
-				Users:      newUsers,
-				TLS: &TLSConfig{
-					Enabled:    true,
-					ServerName: GetGrpcSNI(settings),
-					Reality: &RealityConfig{
-						Enabled:    true,
-						PrivateKey: settings.RealityPrivateKey,
-						ShortID:    shortIDs,
-						Handshake: ServerEP{
-							Server:     GetGrpcSNI(settings),
-							ServerPort: 443,
-						},
-						MaxTimeDifference: "1m",
-					},
-				},
-				Transport: &TransportConfig{Type: "grpc", ServiceName: "grpc-vpn"},
-			},
-		},
+		Inbounds: singboxInbounds,
 		Outbounds: []OutboundConfig{
 			{Type: "direct", Tag: "direct"},
 			{Type: "block", Tag: "block"},
@@ -259,6 +291,61 @@ func GenerateAndReload() error {
 		return ReloadService()
 	}
 	return nil
+}
+
+// GenerateLinkForInbound generates a subscription link for a given inbound config
+func GenerateLinkForInbound(ib database.InboundConfig, user database.User, settings database.SystemSettings, serverAddr string) string {
+	var shortIDs []string
+	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
+
+	port := resolveListenPort(ib, settings)
+	sni := resolveSNI(ib, settings)
+
+	switch ib.Protocol {
+	case "vless":
+		v := url.Values{}
+		v.Add("encryption", "none")
+		v.Add("fp", GetFingerprint(settings))
+
+		if ib.TLSType == "reality" {
+			v.Add("security", "reality")
+			v.Add("pbk", settings.RealityPublicKey)
+			v.Add("sni", sni)
+			if len(shortIDs) > 0 {
+				v.Add("sid", shortIDs[0])
+			}
+		}
+
+		if ib.Flow != "" {
+			v.Add("flow", ib.Flow)
+		}
+
+		switch ib.Transport {
+		case "http":
+			v.Add("type", "http")
+		case "grpc":
+			v.Add("type", "grpc")
+			if ib.ServiceName != "" {
+				v.Add("serviceName", ib.ServiceName)
+			}
+		default:
+			v.Add("type", "tcp")
+		}
+
+		fragment := url.QueryEscape(ib.DisplayName + "-" + user.Username)
+		return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+			user.UUID, serverAddr, port, v.Encode(), fragment)
+
+	case "hysteria2":
+		v := url.Values{}
+		v.Add("insecure", "1")
+
+		fragment := url.QueryEscape(ib.DisplayName + "-" + user.Username)
+		return fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s",
+			user.UUID, serverAddr, port, v.Encode(), fragment)
+	}
+
+	return ""
 }
 
 func ReloadService() error {

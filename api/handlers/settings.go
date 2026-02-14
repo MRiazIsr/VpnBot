@@ -33,6 +33,7 @@ func UpdateSettings() gin.HandlerFunc {
 			GrpcServerName  *string `json:"grpc_server_name"`
 			AlternativeSNIs *string `json:"alternative_snis"`
 			Fingerprint     *string `json:"fingerprint"`
+			RealityShortIDs *string `json:"reality_short_ids"`
 		}
 
 		if err := c.ShouldBindJSON(&input); err != nil {
@@ -63,6 +64,9 @@ func UpdateSettings() gin.HandlerFunc {
 		}
 		if input.Fingerprint != nil {
 			settings.Fingerprint = *input.Fingerprint
+		}
+		if input.RealityShortIDs != nil {
+			settings.RealityShortIDs = *input.RealityShortIDs
 		}
 
 		database.DB.Save(&settings)
@@ -97,6 +101,16 @@ func UpdateKeys() gin.HandlerFunc {
 		service.GenerateAndReload()
 
 		c.JSON(http.StatusOK, settings)
+	}
+}
+
+func ReloadConfig() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := service.GenerateAndReload(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reload config", "details": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Config generated and sing-box reloaded"})
 	}
 }
 

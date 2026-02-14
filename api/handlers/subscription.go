@@ -39,11 +39,12 @@ func GetSubscription() gin.HandlerFunc {
 			mainAddr = settings.ServerDomain
 		}
 
-		links := []string{
-			service.GenerateLink(user, settings, mainAddr),
-			service.GenerateLinkAntiCensorship(user, settings, serverIP),
-			service.GenerateLinkGRPC(user, settings, serverIP),
-			service.GenerateLinkHysteria2(user, serverIP),
+		var inbounds []database.InboundConfig
+		database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
+
+		links := []string{}
+		for _, ib := range inbounds {
+			links = append(links, service.GenerateLinkForInbound(ib, user, settings, mainAddr))
 		}
 
 		body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
@@ -83,11 +84,17 @@ func GetSubscriptionBypass() gin.HandlerFunc {
 			bypassAddr = serverIP
 		}
 
-		links := []string{
-			service.GenerateLinkBypass(user, settings, bypassAddr),
-			service.GenerateLinkAntiCensorship(user, settings, serverIP),
-			service.GenerateLinkGRPC(user, settings, serverIP),
-			service.GenerateLinkHysteria2(user, serverIP),
+		var inbounds []database.InboundConfig
+		database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
+
+		links := []string{}
+		for _, ib := range inbounds {
+			// For bypass: use bypassAddr for the first (main TCP) inbound, serverIP for others
+			addr := serverIP
+			if ib.Transport == "" && ib.Protocol == "vless" && ib.Flow != "" {
+				addr = bypassAddr
+			}
+			links = append(links, service.GenerateLinkForInbound(ib, user, settings, addr))
 		}
 
 		body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
