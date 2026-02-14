@@ -92,6 +92,8 @@ type InboundConfig struct {
 	IsBuiltin   bool   `gorm:"default:false" json:"is_builtin"`
 	SortOrder   int    `gorm:"default:0" json:"sort_order"`
 
+	ServerAddress string `json:"server_address"` // Адрес для ссылок (домен или IP). Пусто = SERVER_IP
+
 	// Reality keys (per-inbound)
 	RealityPrivateKey string          `json:"reality_private_key"`
 	RealityPublicKey  string          `json:"reality_public_key"`
@@ -141,7 +143,7 @@ func Init(path string) {
 				Tag:               "vless-in",
 				DisplayName:       "VLESS Reality (TCP)",
 				Protocol:          "vless",
-				ListenPort:        8443,
+				ListenPort:        8444,
 				TLSType:           "reality",
 				SNI:               "rbc.ru",
 				Transport:         "",

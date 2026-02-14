@@ -267,6 +267,10 @@ func GenerateAndReload() error {
 
 // GenerateLinkForInbound generates a subscription link for a given inbound config
 func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serverAddr string) string {
+	if ib.ServerAddress != "" {
+		serverAddr = ib.ServerAddress
+	}
+
 	fingerprint := ib.Fingerprint
 	if fingerprint == "" {
 		fingerprint = "random"
