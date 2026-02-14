@@ -4,50 +4,52 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: # Позволяет запускать вручную кнопку
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: ${{ secrets.HETZNER_USERNAME }}
-          key: ${{ secrets.HETZNER_SSH_KEY }}
-          port: 22
-          script_stop: true
-          debug: true
-          script: |
-            set -e
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.HETZNER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-            TARGET_DIR="/opt/VpnBot"
-            mkdir -p $TARGET_DIR
-            cd $TARGET_DIR
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.HETZNER_USERNAME }}@${{ secrets.HETZNER_HOST }} bash -s << 'REMOTE_SCRIPT'
+          set -ex
 
-            # 1. Обновляем код
-            if [ ! -d ".git" ]; then
-              echo "🚀 Cloning repository..."
-              git clone git@github.com:MRiazIsr/VpnBot.git .
-            else
-              echo "📥 Pulling latest code..."
-              git fetch origin main
-              git reset --hard origin/main
-            fi
+          TARGET_DIR="/opt/VpnBot"
+          mkdir -p $TARGET_DIR
+          cd $TARGET_DIR
 
-            # 2. Собираем бинарник
-            export PATH=$PATH:/usr/local/go/bin:/usr/bin
-            echo "Go version: $(go version)"
+          # 1. Обновляем код
+          if [ ! -d ".git" ]; then
+            echo "Cloning repository..."
+            git clone git@github.com:MRiazIsr/VpnBot.git .
+          else
+            echo "Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+          fi
 
-            echo "📦 Updating dependencies..."
-            go mod tidy
+          # 2. Собираем бинарник
+          export PATH=$PATH:/usr/local/go/bin:/usr/bin
+          go version
 
-            echo "🔨 Building..."
-            go build -o app_bin .
+          echo "Updating dependencies..."
+          go mod tidy
 
-            # 3. Перезапускаем сервис
-            echo "🔄 Restarting service..."
-            systemctl restart vpnbot
-            sleep 2
-            systemctl status vpnbot --no-pager
+          echo "Building..."
+          go build -o app_bin .
+
+          # 3. Перезапускаем сервис
+          echo "Restarting service..."
+          systemctl restart vpnbot
+          sleep 2
+          systemctl status vpnbot --no-pager
+          REMOTE_SCRIPT
