@@ -35,6 +35,14 @@ func SetupRouter(r *gin.Engine) {
 			auth.PUT("/settings", handlers.UpdateSettings())
 			auth.PUT("/settings/keys", handlers.UpdateKeys())
 			auth.GET("/settings/validate-sni", handlers.ValidateSNI())
+			auth.POST("/reload", handlers.ReloadConfig())
+
+			// Inbounds
+			auth.GET("/inbounds", handlers.GetInbounds())
+			auth.POST("/inbounds", handlers.CreateInbound())
+			auth.PUT("/inbounds/:id", handlers.UpdateInbound())
+			auth.DELETE("/inbounds/:id", handlers.DeleteInbound())
+			auth.PUT("/inbounds/:id/toggle", handlers.ToggleInbound())
 
 			// Stats
 			auth.GET("/stats", handlers.GetStats())
