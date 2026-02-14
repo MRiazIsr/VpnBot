@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -226,13 +228,13 @@ func GenerateAndReload() error {
 				Users:      newUsers,
 				TLS: &TLSConfig{
 					Enabled:    true,
-					ServerName: "vk.com",
+					ServerName: GetGrpcSNI(settings),
 					Reality: &RealityConfig{
 						Enabled:    true,
 						PrivateKey: settings.RealityPrivateKey,
 						ShortID:    shortIDs,
 						Handshake: ServerEP{
-							Server:     "vk.com",
+							Server:     GetGrpcSNI(settings),
 							ServerPort: 443,
 						},
 						MaxTimeDifference: "1m",
@@ -274,7 +276,7 @@ func GenerateLink(user database.User, settings database.SystemSettings, serverIP
 	v.Add("security", "reality")
 	v.Add("encryption", "none")
 	v.Add("pbk", settings.RealityPublicKey)
-	v.Add("fp", "chrome")
+	v.Add("fp", GetFingerprint(settings))
 	v.Add("type", "tcp")
 	v.Add("flow", "xtls-rprx-vision")
 	v.Add("sni", settings.ServerName)
@@ -294,7 +296,7 @@ func GenerateLinkAntiCensorship(user database.User, settings database.SystemSett
 	v.Add("security", "reality")
 	v.Add("encryption", "none")
 	v.Add("pbk", settings.RealityPublicKey)
-	v.Add("fp", "chrome")
+	v.Add("fp", GetFingerprint(settings))
 	v.Add("type", "http")
 	v.Add("sni", "api.yandex.ru")
 
@@ -313,10 +315,10 @@ func GenerateLinkGRPC(user database.User, settings database.SystemSettings, serv
 	v.Add("security", "reality")
 	v.Add("encryption", "none")
 	v.Add("pbk", settings.RealityPublicKey)
-	v.Add("fp", "chrome")
+	v.Add("fp", GetFingerprint(settings))
 	v.Add("type", "grpc")
 	v.Add("serviceName", "grpc-vpn")
-	v.Add("sni", "vk.com")
+	v.Add("sni", GetGrpcSNI(settings))
 
 	var shortIDs []string
 	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
@@ -328,12 +330,91 @@ func GenerateLinkGRPC(user database.User, settings database.SystemSettings, serv
 		user.UUID, serverIP, 2054, v.Encode(), url.QueryEscape(user.Username))
 }
 
+func GenerateLinkBypass(user database.User, settings database.SystemSettings, bypassDomain string) string {
+	v := url.Values{}
+	v.Add("security", "reality")
+	v.Add("encryption", "none")
+	v.Add("pbk", settings.RealityPublicKey)
+	v.Add("fp", GetFingerprint(settings))
+	v.Add("type", "tcp")
+	v.Add("flow", "xtls-rprx-vision")
+	v.Add("sni", settings.ServerName)
+
+	var shortIDs []string
+	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
+	if len(shortIDs) > 0 {
+		v.Add("sid", shortIDs[0])
+	}
+
+	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+		user.UUID, bypassDomain, settings.ListenPort, v.Encode(), url.QueryEscape("Bypass-"+user.Username))
+}
+
+func GenerateLinkDomain(user database.User, settings database.SystemSettings, domain string) string {
+	v := url.Values{}
+	v.Add("security", "reality")
+	v.Add("encryption", "none")
+	v.Add("pbk", settings.RealityPublicKey)
+	v.Add("fp", GetFingerprint(settings))
+	v.Add("type", "tcp")
+	v.Add("flow", "xtls-rprx-vision")
+	v.Add("sni", settings.ServerName)
+
+	var shortIDs []string
+	json.Unmarshal([]byte(settings.RealityShortIDs), &shortIDs)
+	if len(shortIDs) > 0 {
+		v.Add("sid", shortIDs[0])
+	}
+
+	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+		user.UUID, domain, settings.ListenPort, v.Encode(), url.QueryEscape(domain+"-"+user.Username))
+}
+
+// NOTE: Hysteria2 (QUIC) is blocked by TSPU in Russia.
+// Kept for users outside Russia and as fallback.
 func GenerateLinkHysteria2(user database.User, serverIP string) string {
 	v := url.Values{}
 	v.Add("insecure", "1")
 
 	return fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s",
 		user.UUID, serverIP, 2055, v.Encode(), url.QueryEscape(user.Username))
+}
+
+func GetGrpcSNI(settings database.SystemSettings) string {
+	if settings.GrpcServerName != "" {
+		return settings.GrpcServerName
+	}
+	return "vk.com"
+}
+
+func GetFingerprint(settings database.SystemSettings) string {
+	if settings.Fingerprint != "" {
+		return settings.Fingerprint
+	}
+	return "random"
+}
+
+func ValidateRealitySNI(domain string) bool {
+	_, err := net.LookupHost(domain)
+	if err != nil {
+		return false
+	}
+
+	conn, err := net.DialTimeout("tcp", domain+":443", 3*time.Second)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+
+	tlsConn := tls.Client(conn, &tls.Config{
+		ServerName:         domain,
+		InsecureSkipVerify: true,
+	})
+	defer tlsConn.Close()
+
+	tlsConn.SetDeadline(time.Now().Add(3 * time.Second))
+	err = tlsConn.Handshake()
+	return err == nil
 }
 
 // --- API Traffic Logic (gRPC V2Ray) ---
