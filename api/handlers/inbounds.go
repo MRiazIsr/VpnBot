@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"vpnbot/database"
+	"vpnbot/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -55,6 +56,8 @@ func CreateInbound() gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create inbound"})
 			return
 		}
+
+		service.GenerateAndReload()
 
 		c.JSON(http.StatusCreated, input)
 	}
@@ -109,6 +112,9 @@ func UpdateInbound() gin.HandlerFunc {
 
 		// Reload updated record
 		database.DB.First(&existing, id)
+
+		service.GenerateAndReload()
+
 		c.JSON(http.StatusOK, existing)
 	}
 }
@@ -129,6 +135,9 @@ func DeleteInbound() gin.HandlerFunc {
 		}
 
 		database.DB.Delete(&existing)
+
+		service.GenerateAndReload()
+
 		c.JSON(http.StatusOK, gin.H{"message": "Inbound deleted"})
 	}
 }
@@ -145,6 +154,8 @@ func ToggleInbound() gin.HandlerFunc {
 
 		existing.Enabled = !existing.Enabled
 		database.DB.Model(&existing).Update("enabled", existing.Enabled)
+
+		service.GenerateAndReload()
 
 		c.JSON(http.StatusOK, existing)
 	}

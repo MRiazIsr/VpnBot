@@ -1,6 +1,9 @@
 package database
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -8,6 +11,29 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// JSONStringArray хранится в SQLite как JSON-строка, но сериализуется в JSON как []string
+type JSONStringArray []string
+
+func (a JSONStringArray) Value() (driver.Value, error) {
+	if a == nil {
+		return "[]", nil
+	}
+	b, err := json.Marshal(a)
+	return string(b), err
+}
+
+func (a *JSONStringArray) Scan(value interface{}) error {
+	if value == nil {
+		*a = []string{}
+		return nil
+	}
+	s, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("JSONStringArray: expected string, got %T", value)
+	}
+	return json.Unmarshal([]byte(s), a)
+}
 
 var DB *gorm.DB
 
@@ -35,25 +61,6 @@ type User struct {
 	SubscriptionToken string     `gorm:"uniqueIndex" json:"subscription_token"`
 }
 
-type SystemSettings struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	UpdatedAt time.Time `json:"updated_at"`
-
-	ListenPort int `json:"listen_port"`
-
-	// Reality
-	RealityPrivateKey string `json:"reality_private_key"`
-	RealityPublicKey  string `json:"reality_public_key"` // Нужно заполнить для ссылок!
-	RealityShortIDs   string `json:"reality_short_ids"`
-	ServerName        string `json:"server_name"`
-	DestAddr          string `json:"dest_addr"`
-	ServerDomain      string `json:"server_domain"`
-	BypassDomain      string `json:"bypass_domain"`
-	GrpcServerName    string `json:"grpc_server_name"`
-	AlternativeSNIs   string `json:"alternative_snis"`
-	Fingerprint       string `json:"fingerprint"`
-}
-
 type ConnectionLog struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	UserID    uint      `gorm:"index" json:"user_id"`
@@ -71,9 +78,9 @@ type InboundConfig struct {
 	Tag         string `gorm:"uniqueIndex;not null" json:"tag"`
 	DisplayName string `json:"display_name"`
 	Protocol    string `json:"protocol"`    // "vless" | "hysteria2"
-	ListenPort  int    `json:"listen_port"` // 0 = settings.ListenPort
+	ListenPort  int    `json:"listen_port"`
 	TLSType     string `json:"tls_type"`    // "reality" | "certificate"
-	SNI         string `json:"sni"`         // "" = fallback from settings
+	SNI         string `json:"sni"`
 	CertPath    string `json:"cert_path"`
 	KeyPath     string `json:"key_path"`
 	Transport   string `json:"transport"`    // "" (tcp) | "http" | "grpc"
@@ -84,6 +91,12 @@ type InboundConfig struct {
 	Enabled     bool   `gorm:"default:true" json:"enabled"`
 	IsBuiltin   bool   `gorm:"default:false" json:"is_builtin"`
 	SortOrder   int    `gorm:"default:0" json:"sort_order"`
+
+	// Reality keys (per-inbound)
+	RealityPrivateKey string          `json:"reality_private_key"`
+	RealityPublicKey  string          `json:"reality_public_key"`
+	RealityShortIDs   JSONStringArray `json:"reality_short_ids" gorm:"type:text"`
+	Fingerprint       string          `json:"fingerprint"`
 }
 
 // --- Init ---
@@ -96,81 +109,71 @@ func Init(path string) {
 	}
 
 	// Миграция схемы
-	// GORM автоматически добавит новую колонку, если её нет
-	err = DB.AutoMigrate(&User{}, &SystemSettings{}, &ConnectionLog{}, &InboundConfig{})
+	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{})
 	if err != nil {
 		log.Fatal("Migration failed:", err)
 	}
 
-	// 1. Инициализация настроек (из твоего конфига)
-	var settings SystemSettings
-	if result := DB.First(&settings); result.Error != nil {
-		log.Println("Settings not found, initializing from config...")
-		// WARNING: These are default dev values. Override via admin panel or DB.
-		DB.Create(&SystemSettings{
-			ListenPort:        8443,
-			RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
-			RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
-			RealityShortIDs:   `["207fc82a9f9e741f"]`,
-			ServerName:        "rbc.ru",
-			DestAddr:          "rbc.ru:443",
-			ServerDomain:      "",
-			BypassDomain:      "",
-			GrpcServerName:    "tradingview.com",
-			AlternativeSNIs:   `["rbc.ru","tradingview.com","sun6-21.userapi.com"]`,
-			Fingerprint:       "random",
-		})
-	}
+	// Одноразовая миграция: перенос Reality-ключей из system_settings в inbound_configs
+	migrateRealityKeysFromSettings()
 
-	// 2. Инициализация твоего существующего юзера MRiaz
+	// 1. Инициализация твоего существующего юзера MRiaz
 	var oldUser User
 	if result := DB.Where("username = ?", "MRiaz").First(&oldUser); result.Error != nil {
 		log.Println("Restoring user MRiaz...")
 		DB.Create(&User{
 			UUID:              "15986646-9dd8-45b8-b6d4-5c0cf9c8b784",
 			Username:          "MRiaz",
-			TelegramUsername:  "MRiaz", // Добавляем вручную для админа
+			TelegramUsername:  "MRiaz",
 			Status:            "active",
-			TrafficLimit:      0, // Безлимит для админа
+			TrafficLimit:      0,
 			SubscriptionToken: GenerateToken(),
 		})
 	}
 
-	// 3. Seed builtin inbound configs
+	// 2. Seed builtin inbound configs
 	var inboundCount int64
 	DB.Model(&InboundConfig{}).Count(&inboundCount)
 	if inboundCount == 0 {
 		log.Println("Seeding builtin inbound configs...")
 		builtins := []InboundConfig{
 			{
-				Tag:         "vless-in",
-				DisplayName: "VLESS Reality (TCP)",
-				Protocol:    "vless",
-				ListenPort:  0, // uses settings.ListenPort
-				TLSType:     "reality",
-				SNI:         "", // uses settings.ServerName
-				Transport:   "",
-				UserType:    "legacy",
-				Flow:        "xtls-rprx-vision",
-				Multiplex:   false,
-				Enabled:     true,
-				IsBuiltin:   true,
-				SortOrder:   0,
+				Tag:               "vless-in",
+				DisplayName:       "VLESS Reality (TCP)",
+				Protocol:          "vless",
+				ListenPort:        8443,
+				TLSType:           "reality",
+				SNI:               "rbc.ru",
+				Transport:         "",
+				UserType:          "legacy",
+				Flow:              "xtls-rprx-vision",
+				Multiplex:         false,
+				Enabled:           true,
+				IsBuiltin:         true,
+				SortOrder:         0,
+				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
+				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
+				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
+				Fingerprint:       "random",
 			},
 			{
-				Tag:         "vless-in-h2",
-				DisplayName: "VLESS Reality (HTTP/2)",
-				Protocol:    "vless",
-				ListenPort:  2053,
-				TLSType:     "reality",
-				SNI:         "api.yandex.ru",
-				Transport:   "http",
-				UserType:    "new",
-				Flow:        "",
-				Multiplex:   true,
-				Enabled:     true,
-				IsBuiltin:   true,
-				SortOrder:   1,
+				Tag:               "vless-in-h2",
+				DisplayName:       "VLESS Reality (HTTP/2)",
+				Protocol:          "vless",
+				ListenPort:        2053,
+				TLSType:           "reality",
+				SNI:               "api.yandex.ru",
+				Transport:         "http",
+				UserType:          "new",
+				Flow:              "",
+				Multiplex:         true,
+				Enabled:           true,
+				IsBuiltin:         true,
+				SortOrder:         1,
+				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
+				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
+				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
+				Fingerprint:       "random",
 			},
 			{
 				Tag:         "hy2-in",
@@ -189,26 +192,79 @@ func Init(path string) {
 				SortOrder:   2,
 			},
 			{
-				Tag:         "vless-in-grpc",
-				DisplayName: "VLESS Reality (gRPC)",
-				Protocol:    "vless",
-				ListenPort:  2054,
-				TLSType:     "reality",
-				SNI:         "", // uses settings.GrpcServerName
-				Transport:   "grpc",
-				ServiceName: "grpc-vpn",
-				UserType:    "new",
-				Flow:        "",
-				Multiplex:   false,
-				Enabled:     true,
-				IsBuiltin:   true,
-				SortOrder:   3,
+				Tag:               "vless-in-grpc",
+				DisplayName:       "VLESS Reality (gRPC)",
+				Protocol:          "vless",
+				ListenPort:        2054,
+				TLSType:           "reality",
+				SNI:               "tradingview.com",
+				Transport:         "grpc",
+				ServiceName:       "grpc-vpn",
+				UserType:          "new",
+				Flow:              "",
+				Multiplex:         false,
+				Enabled:           true,
+				IsBuiltin:         true,
+				SortOrder:         3,
+				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
+				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
+				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
+				Fingerprint:       "random",
 			},
 		}
 		for _, ib := range builtins {
 			DB.Create(&ib)
 		}
 	}
+}
+
+// migrateRealityKeysFromSettings копирует Reality-ключи из таблицы system_settings
+// в Reality-инбаунды, у которых ключи ещё не заполнены.
+func migrateRealityKeysFromSettings() {
+	// Проверяем, существует ли таблица system_settings
+	if !DB.Migrator().HasTable("system_settings") {
+		return
+	}
+
+	// Проверяем, есть ли Reality-инбаунды с пустым приватным ключом
+	var count int64
+	DB.Model(&InboundConfig{}).Where("tls_type = ? AND reality_private_key = ''", "reality").Count(&count)
+	if count == 0 {
+		return
+	}
+
+	// Читаем ключи из system_settings
+	var result struct {
+		RealityPrivateKey string
+		RealityPublicKey  string
+		RealityShortIDs   string
+		Fingerprint       string
+	}
+	if err := DB.Table("system_settings").First(&result).Error; err != nil {
+		log.Println("Migration: system_settings not found, skipping key migration")
+		return
+	}
+
+	// Парсим short IDs
+	var shortIDs JSONStringArray
+	if err := json.Unmarshal([]byte(result.RealityShortIDs), &shortIDs); err != nil {
+		shortIDs = JSONStringArray{"207fc82a9f9e741f"}
+	}
+
+	fingerprint := result.Fingerprint
+	if fingerprint == "" {
+		fingerprint = "random"
+	}
+
+	log.Println("Migration: copying Reality keys from system_settings to inbound_configs...")
+	DB.Model(&InboundConfig{}).
+		Where("tls_type = ? AND reality_private_key = ''", "reality").
+		Updates(map[string]interface{}{
+			"reality_private_key": result.RealityPrivateKey,
+			"reality_public_key":  result.RealityPublicKey,
+			"reality_short_ids":   shortIDs,
+			"fingerprint":         fingerprint,
+		})
 }
 
 // Helper: Создать токен

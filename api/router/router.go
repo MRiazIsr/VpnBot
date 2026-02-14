@@ -30,11 +30,7 @@ func SetupRouter(r *gin.Engine) {
 			auth.DELETE("/users/:id", handlers.DeleteUser())
 			auth.POST("/users/sync", handlers.SyncUsers())
 
-			// Settings
-			auth.GET("/settings", handlers.GetSettings())
-			auth.PUT("/settings", handlers.UpdateSettings())
-			auth.PUT("/settings/keys", handlers.UpdateKeys())
-			auth.GET("/settings/validate-sni", handlers.ValidateSNI())
+			// Config reload
 			auth.POST("/reload", handlers.ReloadConfig())
 
 			// Inbounds
@@ -43,13 +39,13 @@ func SetupRouter(r *gin.Engine) {
 			auth.PUT("/inbounds/:id", handlers.UpdateInbound())
 			auth.DELETE("/inbounds/:id", handlers.DeleteInbound())
 			auth.PUT("/inbounds/:id/toggle", handlers.ToggleInbound())
+			auth.GET("/inbounds/validate-sni", handlers.ValidateSNI())
 
 			// Stats
 			auth.GET("/stats", handlers.GetStats())
 		}
 	}
 
-	// Public subscription endpoints
+	// Public subscription endpoint
 	r.GET("/sub/:token", handlers.GetSubscription())
-	r.GET("/sub/:token/bypass", handlers.GetSubscriptionBypass())
 }
