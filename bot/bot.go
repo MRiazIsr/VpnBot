@@ -26,7 +26,7 @@ func Start(token string, adminID int64) {
 
 	ServerIP = os.Getenv("SERVER_IP")
 	if ServerIP == "" {
-		ServerIP = ServerIP
+		ServerIP = "49.13.201.110"
 	}
 
 	pref := tele.Settings{
