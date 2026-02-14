@@ -2,11 +2,30 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"vpnbot/database"
 	"vpnbot/service"
 
 	"github.com/gin-gonic/gin"
 )
+
+func trimInboundStrings(input *database.InboundConfig) {
+	input.Tag = strings.TrimSpace(input.Tag)
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.Protocol = strings.TrimSpace(input.Protocol)
+	input.TLSType = strings.TrimSpace(input.TLSType)
+	input.SNI = strings.TrimSpace(input.SNI)
+	input.CertPath = strings.TrimSpace(input.CertPath)
+	input.KeyPath = strings.TrimSpace(input.KeyPath)
+	input.Transport = strings.TrimSpace(input.Transport)
+	input.ServiceName = strings.TrimSpace(input.ServiceName)
+	input.UserType = strings.TrimSpace(input.UserType)
+	input.Flow = strings.TrimSpace(input.Flow)
+	input.ServerAddress = strings.TrimSpace(input.ServerAddress)
+	input.RealityPrivateKey = strings.TrimSpace(input.RealityPrivateKey)
+	input.RealityPublicKey = strings.TrimSpace(input.RealityPublicKey)
+	input.Fingerprint = strings.TrimSpace(input.Fingerprint)
+}
 
 func GetInbounds() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -23,6 +42,8 @@ func CreateInbound() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
 		}
+
+		trimInboundStrings(&input)
 
 		// Validation
 		if input.Tag == "" {
@@ -88,6 +109,8 @@ func UpdateInbound() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
 		}
+
+		trimInboundStrings(&input)
 
 		if input.Protocol != "" && input.Protocol != "vless" && input.Protocol != "hysteria2" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless' or 'hysteria2'"})
