@@ -17,37 +17,36 @@ jobs:
           username: ${{ secrets.HETZNER_USERNAME }}
           key: ${{ secrets.HETZNER_SSH_KEY }}
           port: 22
+          script_stop: true
           script: |
-            # 1. Переходим в папку проекта
-            # Используем путь /opt/VpnBot, так как в логах видно, что репозиторий там
+            set -e
+
             TARGET_DIR="/opt/VpnBot"
-            
             mkdir -p $TARGET_DIR
             cd $TARGET_DIR
-            
-            # 2. Логика обновления кода
+
+            # 1. Обновляем код
             if [ ! -d ".git" ]; then
-              echo "🚀 Repository not found. Cloning..."
-              # Клонируем в текущую директорию (.)
+              echo "🚀 Cloning repository..."
               git clone git@github.com:MRiazIsr/VpnBot.git .
             else
               echo "📥 Pulling latest code..."
-              git pull origin main
+              git fetch origin main
+              git reset --hard origin/main
             fi
-            
-            # 3. Собираем бинарник
+
+            # 2. Собираем бинарник
             export PATH=$PATH:/usr/local/go/bin:/usr/bin
-            
-            echo "📦 Updating dependencies (Fixing missing go.sum)..."
-            # ВАЖНО: Эта команда скачает недостающие библиотеки
+            echo "Go version: $(go version)"
+
+            echo "📦 Updating dependencies..."
             go mod tidy
-            
-            echo "🔨 Building Go binary..."
-            go build -o app_bin main.go
-            
-            # 4. Перезапускаем сервис
+
+            echo "🔨 Building..."
+            go build -o app_bin .
+
+            # 3. Перезапускаем сервис
             echo "🔄 Restarting service..."
             systemctl restart vpnbot
-            
-            # 5. Проверка статуса
+            sleep 2
             systemctl status vpnbot --no-pager
