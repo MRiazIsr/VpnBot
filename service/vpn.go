@@ -69,6 +69,7 @@ type TransportConfig struct {
 	Type        string `json:"type"`
 	ServiceName string `json:"service_name,omitempty"`
 	Path        string `json:"path,omitempty"`
+	Mode        string `json:"mode,omitempty"` // xhttp only: "auto" | "packet-up" | "stream-up" | "stream-one"
 }
 
 type MultiplexConfig struct {
@@ -206,8 +207,11 @@ func buildSingboxInbound(ib database.InboundConfig, users []database.User) Singb
 		switch ib.Transport {
 		case "grpc":
 			sb.Transport.ServiceName = ib.ServiceName
-		case "httpupgrade", "ws":
+		case "httpupgrade", "ws", "xhttp":
 			sb.Transport.Path = ib.ServiceName
+			if ib.Transport == "xhttp" {
+				sb.Transport.Mode = "auto"
+			}
 		}
 	}
 
@@ -314,6 +318,11 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 			}
 		case "ws":
 			v.Add("type", "ws")
+			if ib.ServiceName != "" {
+				v.Add("path", ib.ServiceName)
+			}
+		case "xhttp":
+			v.Add("type", "xhttp")
 			if ib.ServiceName != "" {
 				v.Add("path", ib.ServiceName)
 			}

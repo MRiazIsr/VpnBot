@@ -105,6 +105,13 @@ func GetInboundRules() gin.HandlerFunc {
 					"user_type":   "new",
 					"flow":        "",
 				},
+				{
+					"value":       "xhttp",
+					"label":       "XHTTP (SplitHTTP)",
+					"description": "Разделяет upload/download на отдельные HTTP-соединения. Максимально устойчив к ML-DPI. Требует sing-box-extended. Требует user_type=new. Поле service_name = path.",
+					"user_type":   "new",
+					"flow":        "",
+				},
 			},
 			"protocols": []gin.H{
 				{
