@@ -66,6 +66,48 @@ func validateInboundCombination(input *database.InboundConfig) string {
 	return ""
 }
 
+func GetSNIPresets() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		type sniEntry struct {
+			Domain      string `json:"domain"`
+			Description string `json:"description"`
+		}
+		type sniGroup struct {
+			Provider string     `json:"provider"`
+			Entries  []sniEntry `json:"entries"`
+		}
+
+		c.JSON(http.StatusOK, []sniGroup{
+			{
+				Provider: "VK",
+				Entries: []sniEntry{
+					{Domain: "pp.userapi.com", Description: "CDN фото — максимальный трафик, каждый аватар/фото на VK"},
+					{Domain: "sun.userapi.com", Description: "CDN медиа — видео, документы, вложения"},
+					{Domain: "push.vk.com", Description: "Push-уведомления — долгие соединения выглядят нормально"},
+					{Domain: "stats.vk.com", Description: "Аналитика/телеметрия — фоновый шум"},
+				},
+			},
+			{
+				Provider: "Yandex",
+				Entries: []sniEntry{
+					{Domain: "yastatic.net", Description: "CDN статики — JS/CSS/шрифты, максимальный трафик среди Яндекса"},
+					{Domain: "avatars.mds.yandex.net", Description: "CDN аватаров и изображений всех сервисов Яндекса"},
+					{Domain: "strm.yandex.net", Description: "Стриминг — Кинопоиск, Яндекс Музыка, длинные соединения"},
+					{Domain: "an.yandex.ru", Description: "Рекламная сеть — высокий трафик на каждой странице с рекламой"},
+				},
+			},
+			{
+				Provider: "Sber",
+				Entries: []sniEntry{
+					{Domain: "cdn.sberbank.ru", Description: "CDN статических ресурсов — максимальный трафик Сбера"},
+					{Domain: "app.sber.ru", Description: "Платформа приложений — Let's Encrypt сертификат"},
+					{Domain: "salute.sber.ru", Description: "AI/умный дом — Let's Encrypt, высокий трафик"},
+				},
+			},
+		})
+	}
+}
+
 func GetInboundRules() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{

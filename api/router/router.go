@@ -34,6 +34,7 @@ func SetupRouter(r *gin.Engine) {
 			auth.POST("/reload", handlers.ReloadConfig())
 
 			// Inbounds
+			auth.GET("/inbounds/sni-presets", handlers.GetSNIPresets())
 			auth.GET("/inbounds/rules", handlers.GetInboundRules())
 			auth.GET("/inbounds", handlers.GetInbounds())
 			auth.POST("/inbounds", handlers.CreateInbound())
