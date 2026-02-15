@@ -326,6 +326,7 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 			if ib.ServiceName != "" {
 				v.Add("path", ib.ServiceName)
 			}
+			v.Add("mode", "auto")
 		default:
 			v.Add("type", "tcp")
 		}

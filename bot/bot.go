@@ -165,6 +165,11 @@ func Start(token string, adminID int64) {
 	})
 
 	b.Handle(&btnConnect, func(c tele.Context) error {
+		var user database.User
+		if err := database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user).Error; err != nil {
+			return c.Send("❌ Пользователь не найден.")
+		}
+
 		var inbounds []database.InboundConfig
 		database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
 
@@ -174,17 +179,51 @@ func Start(token string, adminID int64) {
 
 		connectMenu := &tele.ReplyMarkup{}
 		rows := []tele.Row{}
-		lines := []string{"Выберите тип подключения:\n"}
+
+		// Master subscription button
+		btnSub := connectMenu.Data("⭐ Авто-подключение (рекомендуется)", "conn_sub")
+		btnSubQR := connectMenu.Data("📷 QR-код", "conn_sub_qr")
+		rows = append(rows, connectMenu.Row(btnSub, btnSubQR))
+
+		// Individual inbound buttons
 		for _, ib := range inbounds {
-			lines = append(lines, fmt.Sprintf("• **%s** (порт %d)", ib.DisplayName, ib.ListenPort))
 			btnLink := connectMenu.Data(fmt.Sprintf("🔗 %s", ib.DisplayName), "conn_link", fmt.Sprintf("%d", ib.ID))
 			btnQR := connectMenu.Data(fmt.Sprintf("📷 %s", ib.DisplayName), "conn_qr", fmt.Sprintf("%d", ib.ID))
 			rows = append(rows, connectMenu.Row(btnLink, btnQR))
 		}
 		connectMenu.Inline(rows...)
 
-		text := strings.Join(lines, "\n") + "\n\nПробуйте разные — зависит от провайдера."
+		text := "🔑 **Подключение к VPN**\n\n" +
+			"⭐ **Авто-подключение** — одна ссылка на все серверы.\n" +
+			"Приложение само выберет лучший и переключится, если один перестанет работать. " +
+			"Также настройки обновляются автоматически — не нужно ничего менять вручную.\n\n" +
+			"Ниже — отдельные серверы, если хотите выбрать конкретный."
 		return c.Send(text, connectMenu, tele.ModeMarkdown)
+	})
+
+	b.Handle(&tele.Btn{Unique: "conn_sub"}, func(c tele.Context) error {
+		var user database.User
+		if err := database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user).Error; err != nil {
+			return c.Send("❌ Пользователь не найден.")
+		}
+		subURL := buildSubURL(user.SubscriptionToken)
+		return c.Send(fmt.Sprintf("`%s`", subURL), tele.ModeMarkdown)
+	})
+
+	b.Handle(&tele.Btn{Unique: "conn_sub_qr"}, func(c tele.Context) error {
+		var user database.User
+		if err := database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user).Error; err != nil {
+			return c.Send("❌ Пользователь не найден.")
+		}
+		subURL := buildSubURL(user.SubscriptionToken)
+
+		qr, qrErr := qrcode.Encode(subURL, qrcode.Medium, 256)
+		if qrErr != nil {
+			return c.Send("❌ Ошибка генерации QR кода.")
+		}
+
+		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "Авто-подключение — сканируйте в Hiddify"}
+		return c.Send(photo)
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_link"}, func(c tele.Context) error {
@@ -373,6 +412,14 @@ func escapeMarkdown(s string) string {
 		"[", "\\[",
 	)
 	return replacer.Replace(s)
+}
+
+func buildSubURL(token string) string {
+	domain := os.Getenv("SERVER_DOMAIN")
+	if domain != "" {
+		return fmt.Sprintf("https://%s/sub/%s", domain, token)
+	}
+	return fmt.Sprintf("https://%s:8085/sub/%s", ServerIP, token)
 }
 
 func formatBytes(b int64) string {
