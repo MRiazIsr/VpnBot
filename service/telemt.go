@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	TelemetBinaryPath  = "/usr/local/bin/telemt"
-	TelemetConfigPath  = "/etc/telemt.toml"
+	TelemetBinaryPath  = "/bin/telemt"
+	TelemetConfigDir   = "/etc/telemt"
+	TelemetConfigPath  = "/etc/telemt/telemt.toml"
 	TelemetServicePath = "/etc/systemd/system/telemt.service"
+	TelemetWorkDir     = "/opt/telemt"
 )
 
 // GenerateSecret генерирует 16 случайных байт → 32-hex строку
@@ -42,14 +44,21 @@ func InstallTelemt() error {
 		return nil
 	}
 
-	// Определяем архитектуру
-	arch := runtime.GOARCH
-	switch arch {
-	case "amd64":
-		arch = "x86_64"
-	case "arm64":
-		arch = "aarch64"
+	// Определяем архитектуру через uname -m (x86_64 / aarch64)
+	archOut, err := exec.Command("uname", "-m").Output()
+	if err != nil {
+		// fallback на Go runtime
+		arch := runtime.GOARCH
+		switch arch {
+		case "amd64":
+			archOut = []byte("x86_64")
+		case "arm64":
+			archOut = []byte("aarch64")
+		default:
+			archOut = []byte(arch)
+		}
 	}
+	arch := strings.TrimSpace(string(archOut))
 
 	// Определяем libc (musl или gnu)
 	libc := "gnu"
@@ -58,17 +67,25 @@ func InstallTelemt() error {
 		libc = "musl"
 	}
 
-	url := fmt.Sprintf("https://github.com/nickolaev/telemt/releases/latest/download/telemt-%s-linux-%s.tar.gz", arch, libc)
+	url := fmt.Sprintf("https://github.com/telemt/telemt/releases/latest/download/telemt-%s-linux-%s.tar.gz", arch, libc)
 	log.Println("Скачиваем telemt:", url)
 
-	// Скачиваем и распаковываем
-	cmd := exec.Command("sh", "-c", fmt.Sprintf(
-		"cd /tmp && curl -sL '%s' -o telemt.tar.gz && tar xzf telemt.tar.gz && mv telemt '%s' && chmod +x '%s' && rm -f telemt.tar.gz",
-		url, TelemetBinaryPath, TelemetBinaryPath))
+	// Скачиваем и распаковываем (по документации telemt)
+	installCmd := fmt.Sprintf(
+		"wget -qO- '%s' | tar -xz && mv telemt '%s' && chmod +x '%s'",
+		url, TelemetBinaryPath, TelemetBinaryPath)
+	cmd := exec.Command("sh", "-c", installCmd)
+	cmd.Dir = "/tmp"
 	if output, err := cmd.CombinedOutput(); err != nil {
 		log.Println("Ошибка установки telemt:", err, string(output))
 		return fmt.Errorf("ошибка установки telemt: %w", err)
 	}
+
+	// Создаём пользователя telemt, директории для конфига и работы
+	exec.Command("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "telemt").Run()
+	os.MkdirAll(TelemetConfigDir, 0755)
+	os.MkdirAll(TelemetWorkDir, 0755)
+	exec.Command("chown", "telemt:telemt", TelemetWorkDir).Run()
 
 	log.Println("telemt успешно установлен:", TelemetBinaryPath)
 	return nil
@@ -79,6 +96,15 @@ func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 	// Получаем всех telemetUser для этого конфига
 	var telemetUsers []database.TelemetUser
 	database.DB.Where("telemet_config_id = ?", cfg.ID).Find(&telemetUsers)
+
+	port := cfg.Port
+	if port == 0 {
+		port = 443
+	}
+	tlsDomain := cfg.TLSDomain
+	if tlsDomain == "" {
+		tlsDomain = "dl.google.com"
+	}
 
 	var sb strings.Builder
 
@@ -99,12 +125,18 @@ func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 	sb.WriteString("tls = true\n")
 	sb.WriteString("\n")
 
+	// [server]
+	sb.WriteString("[server]\n")
+	sb.WriteString(fmt.Sprintf("port = %d\n", port))
+	sb.WriteString("\n")
+
+	// [server.api]
+	sb.WriteString("[server.api]\n")
+	sb.WriteString("enabled = true\n")
+	sb.WriteString("\n")
+
 	// [censorship]
 	sb.WriteString("[censorship]\n")
-	tlsDomain := cfg.TLSDomain
-	if tlsDomain == "" {
-		tlsDomain = "dl.google.com"
-	}
 	sb.WriteString(fmt.Sprintf("tls_domain = \"%s\"\n", tlsDomain))
 	sb.WriteString("\n")
 
@@ -114,6 +146,7 @@ func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 		sb.WriteString(fmt.Sprintf("%s = \"%s\"\n", tu.Label, tu.Secret))
 	}
 
+	os.MkdirAll(TelemetConfigDir, 0755)
 	err := os.WriteFile(TelemetConfigPath, []byte(sb.String()), 0644)
 	if err != nil {
 		log.Println("Ошибка записи конфига telemt:", err)
@@ -124,17 +157,24 @@ func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 	return nil
 }
 
-// EnsureTelemetService создаёт systemd unit для telemt
+// EnsureTelemetService создаёт systemd unit для telemt (по документации telemt)
 func EnsureTelemetService() error {
 	unit := `[Unit]
-Description=Telemt MTProto Proxy
-After=network.target
+Description=Telemt
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=` + TelemetBinaryPath + ` -c ` + TelemetConfigPath + `
+User=telemt
+Group=telemt
+WorkingDirectory=` + TelemetWorkDir + `
+ExecStart=` + TelemetBinaryPath + ` ` + TelemetConfigPath + `
 Restart=on-failure
-RestartSec=5
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
