@@ -20,6 +20,11 @@ func main() {
 		log.Println("Error generating initial config:", err)
 	}
 
+	// Настройка telemt (MTProto proxy) если включён
+	if err := service.SetupTelemet(); err != nil {
+		log.Println("Error setting up telemt:", err)
+	}
+
 	botToken := os.Getenv("BOT_TOKEN")
 	adminID := int64(124343839)
 	if envAdminID := os.Getenv("ADMIN_ID"); envAdminID != "" {

@@ -45,6 +45,15 @@ func SetupRouter(r *gin.Engine) {
 
 			// Stats
 			auth.GET("/stats", handlers.GetStats())
+
+			// Telemt (MTProto proxy)
+			auth.GET("/telemt/config", handlers.GetTelemetConfig())
+			auth.POST("/telemt/config", handlers.UpdateTelemetConfig())
+			auth.POST("/telemt/setup", handlers.SetupTelemet())
+			auth.POST("/telemt/stop", handlers.StopTelemet())
+			auth.GET("/telemt/status", handlers.GetTelemetStatus())
+			auth.GET("/telemt/users", handlers.GetTelemetUsers())
+			auth.POST("/telemt/sync", handlers.SyncTelemetUsers())
 		}
 	}
 

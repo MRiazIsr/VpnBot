@@ -157,6 +157,8 @@ func Start(token string, adminID int64) {
 		database.DB.Create(&newUser)
 
 		service.GenerateAndReload()
+		service.SyncTelemetUsers()
+		service.GenerateAndReloadTelemet()
 
 		userChat := &tele.User{ID: targetID}
 		b.Send(userChat, "🎉 **Поздравляем! Ваш доступ одобрен.**\n\nТеперь вы можете пользоваться VPN. Нажмите кнопку ниже, чтобы подключиться.", menu)
@@ -191,6 +193,14 @@ func Start(token string, adminID int64) {
 			btnQR := connectMenu.Data(fmt.Sprintf("📷 %s", ib.DisplayName), "conn_qr", fmt.Sprintf("%d", ib.ID))
 			rows = append(rows, connectMenu.Row(btnLink, btnQR))
 		}
+		// Кнопка Telegram Proxy (если telemt включён)
+		var telemetCfg database.TelemetConfig
+		if database.DB.First(&telemetCfg).Error == nil && telemetCfg.Enabled {
+			btnProxy := connectMenu.Data("📡 Telegram Proxy", "conn_tg_proxy")
+			btnProxyQR := connectMenu.Data("📷 QR Proxy", "conn_tg_proxy_qr")
+			rows = append(rows, connectMenu.Row(btnProxy, btnProxyQR))
+		}
+
 		connectMenu.Inline(rows...)
 
 		text := "🔑 **Подключение к VPN**\n\n" +
@@ -248,6 +258,31 @@ func Start(token string, adminID int64) {
 		}
 
 		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: fmt.Sprintf("%s — сканируйте в Hiddify", ib.DisplayName)}
+		return c.Send(photo)
+	})
+
+	// Обработчик кнопки Telegram Proxy — ссылка
+	b.Handle(&tele.Btn{Unique: "conn_tg_proxy"}, func(c tele.Context) error {
+		link, err := getTelemetLink(c)
+		if err != nil {
+			return c.Send(err.Error())
+		}
+		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
+	})
+
+	// Обработчик кнопки Telegram Proxy — QR-код
+	b.Handle(&tele.Btn{Unique: "conn_tg_proxy_qr"}, func(c tele.Context) error {
+		link, err := getTelemetLink(c)
+		if err != nil {
+			return c.Send(err.Error())
+		}
+
+		qr, qrErr := qrcode.Encode(link, qrcode.Medium, 256)
+		if qrErr != nil {
+			return c.Send("❌ Ошибка генерации QR кода.")
+		}
+
+		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "Telegram Proxy — сканируйте камерой Telegram"}
 		return c.Send(photo)
 	})
 
@@ -420,6 +455,47 @@ func buildSubURL(token string) string {
 		return fmt.Sprintf("https://%s/sub/%s", domain, token)
 	}
 	return fmt.Sprintf("https://%s:8085/sub/%s", ServerIP, token)
+}
+
+// getTelemetLink возвращает ссылку tg://proxy для текущего юзера
+func getTelemetLink(c tele.Context) (string, error) {
+	var user database.User
+	if err := database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user).Error; err != nil {
+		return "", fmt.Errorf("❌ Пользователь не найден.")
+	}
+
+	var cfg database.TelemetConfig
+	if err := database.DB.First(&cfg).Error; err != nil || !cfg.Enabled {
+		return "", fmt.Errorf("❌ Telegram Proxy не настроен.")
+	}
+
+	// Ищем или создаём TelemetUser
+	var tu database.TelemetUser
+	if err := database.DB.Where("user_id = ? AND telemet_config_id = ?", user.ID, cfg.ID).First(&tu).Error; err != nil {
+		// Создаём новый секрет
+		tu = database.TelemetUser{
+			TelemetConfigID: cfg.ID,
+			UserID:          user.ID,
+			Label:           user.Username,
+			Secret:          service.GenerateSecret(),
+		}
+		database.DB.Create(&tu)
+		// Перегенерируем конфиг telemt
+		service.GenerateAndReloadTelemet()
+	}
+
+	serverAddr := cfg.ServerAddress
+	if serverAddr == "" {
+		serverAddr = ServerIP
+	}
+
+	tlsDomain := cfg.TLSDomain
+	if tlsDomain == "" {
+		tlsDomain = "dl.google.com"
+	}
+
+	link := service.GenerateTelemetProxyLink(serverAddr, cfg.Port, tu.Secret, tlsDomain)
+	return link, nil
 }
 
 func formatBytes(b int64) string {

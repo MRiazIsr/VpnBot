@@ -473,6 +473,7 @@ func checkLimits(username string) {
 				database.DB.Model(&user).Update("status", "expired")
 				log.Printf("User %s expired due to traffic limit", username)
 				GenerateAndReload()
+				GenerateAndReloadTelemet()
 			}
 		}
 	}

@@ -69,6 +69,35 @@ type ConnectionLog struct {
 	Reason    string    `json:"reason"`
 }
 
+// TelemetConfig — настройки MTProto прокси (синглтон, одна запись)
+type TelemetConfig struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Enabled       bool   `gorm:"default:false" json:"enabled"`
+	Port          int    `gorm:"default:443" json:"port"`
+	TLSDomain     string `json:"tls_domain"`
+	ServerAddress string `json:"server_address"` // IP/домен для ссылок. Пусто = SERVER_IP
+	ProxyTag      string `json:"proxy_tag"`      // proxy tag от @MTProxyBot (32 hex chars)
+}
+
+// TelemetUser — секрет пользователя для MTProto прокси
+type TelemetUser struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	TelemetConfigID uint   `gorm:"index" json:"telemet_config_id"`
+	UserID          uint   `gorm:"index" json:"user_id"`
+	Label           string `json:"label"`  // имя в TOML-конфиге (= user.Username)
+	Secret          string `json:"secret"` // 32-hex секрет
+
+	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+}
+
 type InboundConfig struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
 	CreatedAt time.Time      `json:"created_at"`
@@ -111,7 +140,7 @@ func Init(path string) {
 	}
 
 	// Миграция схемы
-	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{})
+	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{})
 	if err != nil {
 		log.Fatal("Migration failed:", err)
 	}
