@@ -77,7 +77,7 @@ type TelemetConfig struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Enabled       bool   `gorm:"default:false" json:"enabled"`
-	Port          int    `gorm:"default:8443" json:"port"`
+	Port          int    `gorm:"default:9443" json:"port"`
 	TLSDomain     string `json:"tls_domain"`
 	ServerAddress string `json:"server_address"` // IP/домен для ссылок. Пусто = SERVER_IP
 	ProxyTag      string `json:"proxy_tag"`      // proxy tag от @MTProxyBot (32 hex chars)

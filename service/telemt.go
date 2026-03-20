@@ -99,7 +99,7 @@ func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 
 	port := cfg.Port
 	if port == 0 {
-		port = 8443
+		port = 9443
 	}
 	tlsDomain := cfg.TLSDomain
 	if tlsDomain == "" {
