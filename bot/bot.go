@@ -267,7 +267,7 @@ func Start(token string, adminID int64) {
 		if err != nil {
 			return c.Send(err.Error())
 		}
-		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
+		return c.Send("📡 Нажмите на ссылку для подключения прокси:\n\n"+link)
 	})
 
 	// Обработчик кнопки Telegram Proxy — QR-код
