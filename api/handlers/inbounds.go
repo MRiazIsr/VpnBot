@@ -180,14 +180,26 @@ func GetInbounds() gin.HandlerFunc {
 	}
 }
 
+type createInboundRequest struct {
+	database.InboundConfig
+	AutoOpenFirewall bool `json:"auto_open_firewall"`
+	AutoAddForward   bool `json:"auto_add_forward"`
+}
+
+type actionResult struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
 func CreateInbound() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var input database.InboundConfig
-		if err := c.ShouldBindJSON(&input); err != nil {
+		var req createInboundRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
 		}
 
+		input := req.InboundConfig
 		trimInboundStrings(&input)
 
 		// Validation
@@ -240,7 +252,34 @@ func CreateInbound() gin.HandlerFunc {
 
 		service.GenerateAndReload()
 
-		c.JSON(http.StatusCreated, input)
+		// Авто-открытие порта и проброс
+		if !req.AutoOpenFirewall && !req.AutoAddForward {
+			c.JSON(http.StatusCreated, input)
+			return
+		}
+
+		netProto := service.InboundNetProtocol(input)
+		response := gin.H{"inbound": input}
+
+		if req.AutoOpenFirewall && input.ListenPort > 0 {
+			result := actionResult{Success: true}
+			if err := service.OpenFirewallPort(input.ListenPort, netProto, input.DisplayName); err != nil {
+				result.Success = false
+				result.Error = err.Error()
+			}
+			response["firewall_result"] = result
+		}
+
+		if req.AutoAddForward && input.ListenPort > 0 {
+			result := actionResult{Success: true}
+			if err := service.AddForward(input.ListenPort, netProto); err != nil {
+				result.Success = false
+				result.Error = err.Error()
+			}
+			response["forward_result"] = result
+		}
+
+		c.JSON(http.StatusCreated, response)
 	}
 }
 

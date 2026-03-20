@@ -17,7 +17,73 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.HETZNER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy
+      - name: Deploy RuVDS SSH key
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.HETZNER_USERNAME }}@${{ secrets.HETZNER_HOST }} bash -s << KEYSCRIPT
+          if [ -n "${{ secrets.RUVDS_SSH_KEY }}" ]; then
+            mkdir -p /root/.ssh
+            cat > /root/.ssh/ruvds_key << 'KEYEOF'
+          ${{ secrets.RUVDS_SSH_KEY }}
+          KEYEOF
+            chmod 600 /root/.ssh/ruvds_key
+            echo "RuVDS SSH key deployed"
+          fi
+          KEYSCRIPT
+
+      - name: Write environment file
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.HETZNER_USERNAME }}@${{ secrets.HETZNER_HOST }} bash -s << ENVSCRIPT
+          cat > /opt/VpnBot/.env << 'ENVEOF'
+          BOT_TOKEN=${{ secrets.BOT_TOKEN }}
+          ADMIN_ID=${{ secrets.ADMIN_ID }}
+          ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }}
+          SERVER_DOMAIN=${{ secrets.SERVER_DOMAIN }}
+          SERVER_IP=49.13.201.110
+          HETZNER_API_TOKEN=${{ secrets.HETZNER_API_TOKEN }}
+          HETZNER_SERVER_IP=49.13.201.110
+          RUVDS_IP=${{ secrets.RUVDS_IP }}
+          RUVDS_SSH_USER=root
+          RUVDS_SSH_KEY_PATH=/root/.ssh/ruvds_key
+          RUVDS_SSH_PORT=22
+          ENVEOF
+          chmod 600 /opt/VpnBot/.env
+          echo "Environment file written"
+          ENVSCRIPT
+
+      - name: Migrate systemd to EnvironmentFile
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.HETZNER_USERNAME }}@${{ secrets.HETZNER_HOST }} bash -s << 'SVCSCRIPT'
+          SERVICE_FILE="/etc/systemd/system/vpnbot.service"
+
+          # Проверяем, нужна ли миграция (есть ли ещё inline Environment=)
+          if grep -q '^Environment=' "$SERVICE_FILE"; then
+            echo "Migrating systemd service to EnvironmentFile..."
+            cat > "$SERVICE_FILE" << 'UNITEOF'
+          [Unit]
+          Description=VPN Bot Backend
+          After=network.target sing-box.service
+
+          [Service]
+          WorkingDirectory=/opt/VpnBot
+          ExecStart=/opt/VpnBot/app_bin
+          EnvironmentFile=/opt/VpnBot/.env
+          Restart=always
+          User=root
+
+          [Install]
+          WantedBy=multi-user.target
+          UNITEOF
+            systemctl daemon-reload
+            echo "Systemd service migrated"
+          else
+            echo "Already using EnvironmentFile, skipping"
+          fi
+          SVCSCRIPT
+
+      - name: Build and deploy application
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             ${{ secrets.HETZNER_USERNAME }}@${{ secrets.HETZNER_HOST }} bash -s << 'REMOTE_SCRIPT'

@@ -46,6 +46,19 @@ func SetupRouter(r *gin.Engine) {
 			// Stats
 			auth.GET("/stats", handlers.GetStats())
 
+			// Network (Firewall + Port Forwarding + Connectivity)
+			auth.GET("/network/status", handlers.GetNetworkStatus())
+			auth.GET("/network/firewall/info", handlers.GetFirewallInfo())
+			auth.GET("/network/firewall/rules", handlers.GetFirewallRules())
+			auth.POST("/network/firewall/rules", handlers.OpenFirewallPort())
+			auth.DELETE("/network/firewall/rules", handlers.CloseFirewallPort())
+			auth.GET("/network/forwards/info", handlers.GetPortForwardInfo())
+			auth.GET("/network/forwards/rules", handlers.GetForwardRules())
+			auth.POST("/network/forwards/rules", handlers.AddForwardRule())
+			auth.DELETE("/network/forwards/rules", handlers.RemoveForwardRule())
+			auth.POST("/network/ping", handlers.PingPort())
+			auth.GET("/network/check-all", handlers.CheckAllPorts())
+
 			// Telemt (MTProto proxy)
 			auth.GET("/telemt/config", handlers.GetTelemetConfig())
 			auth.POST("/telemt/config", handlers.UpdateTelemetConfig())

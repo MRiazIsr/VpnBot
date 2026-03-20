@@ -28,7 +28,7 @@ VPN management system: Go backend + Telegram bot + Next.js admin panel.
 ### Packages
 
 - **`database/`** — GORM models (`User`, `InboundConfig`, `ConnectionLog`), SQLite init with auto-migration and seed data
-- **`service/`** — sing-box JSON config generation (`GenerateAndReload()`), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API
+- **`service/`** — sing-box JSON config generation (`GenerateAndReload()`), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go`), connectivity checks (`network.go`)
 - **`api/handlers/`** — REST handlers: auth, users, inbounds CRUD, stats, public subscription endpoints
 - **`api/middleware/`** — CORS and JWT Bearer auth
 - **`api/router/`** — Route registration under `/api` with auth group
@@ -58,11 +58,23 @@ Drives both sing-box config generation and subscription links. Key fields:
 
 `BOT_TOKEN`, `ADMIN_PASSWORD`, `JWT_SECRET`, `SERVER_IP` (default: 49.13.201.110), `ADMIN_ID` (Telegram ID).
 
+### Network Management (optional)
+
+- `HETZNER_API_TOKEN` — Hetzner Cloud API token for firewall management
+- `HETZNER_SERVER_IP` — Hetzner server IP (default: falls back to `SERVER_IP` → 49.13.201.110)
+- `RUVDS_IP` — RuVDS public IP for SSH port forwarding management
+- `RUVDS_SSH_USER` — SSH user (default: root)
+- `RUVDS_SSH_KEY_PATH` — Path to SSH private key (default: ~/.ssh/id_rsa)
+- `RUVDS_SSH_PORT` — SSH port (default: 22)
+
+Network topology: `Client → RuVDS (iptables DNAT/MASQUERADE) → Hetzner (sing-box)`. Hetzner Cloud Firewall controls inbound access; RuVDS iptables handles port forwarding.
+
 ## API Structure
 
 - Public: `GET /sub/:token`
 - Auth: `POST /api/login` → JWT
 - Protected: `/api/users/*`, `/api/inbounds/*`, `/api/inbounds/validate-sni`, `/api/stats`, `POST /api/reload`
+- Network: `/api/network/status`, `/api/network/firewall/*`, `/api/network/forwards/*`, `/api/network/ping`, `/api/network/check-all`
 
 Server listens on `:8085` (proxied via nginx).
 

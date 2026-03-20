@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/v2fly/v2ray-core/v4 v4.45.2
+	golang.org/x/crypto v0.9.0
 	google.golang.org/grpc v1.46.2
 	gopkg.in/telebot.v3 v3.2.1
 	gorm.io/driver/sqlite v1.5.5
@@ -38,7 +39,6 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/crypto v0.9.0 // indirect
 	golang.org/x/net v0.10.0 // indirect
 	golang.org/x/sys v0.8.0 // indirect
 	golang.org/x/text v0.9.0 // indirect
