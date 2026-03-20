@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -32,6 +34,7 @@ type FirewallInfo struct {
 	ServerName   string         `json:"server_name,omitempty"`
 	HetznerIP    string         `json:"hetzner_ip,omitempty"`
 	Rules        []FirewallRule `json:"rules,omitempty"`
+	UFWRules     []string       `json:"ufw_rules,omitempty"`
 }
 
 // --- Internal state ---
@@ -151,6 +154,8 @@ func GetFirewallInfo() (*FirewallInfo, error) {
 		return nil, err
 	}
 
+	ufwRules, _ := GetUFWRules()
+
 	return &FirewallInfo{
 		Configured:   true,
 		FirewallID:   fwFirewallID,
@@ -159,6 +164,7 @@ func GetFirewallInfo() (*FirewallInfo, error) {
 		ServerName:   fwServerNm,
 		HetznerIP:    fwServerIP,
 		Rules:        rules,
+		UFWRules:     ufwRules,
 	}, nil
 }
 
@@ -183,6 +189,7 @@ func GetFirewallRules() ([]FirewallRule, error) {
 }
 
 func OpenFirewallPort(port int, protocol string, description string) error {
+	// Hetzner Cloud Firewall
 	if err := ensureFirewallInit(); err != nil {
 		return err
 	}
@@ -194,29 +201,42 @@ func OpenFirewallPort(port int, protocol string, description string) error {
 
 	portStr := fmt.Sprintf("%d", port)
 
-	// Проверяем, не открыт ли уже
+	alreadyOpen := false
 	for _, r := range rules {
 		if r.Direction == "in" && r.Protocol == protocol && r.Port == portStr {
-			return nil // Уже открыт
+			alreadyOpen = true
+			break
 		}
 	}
 
-	if description == "" {
-		description = fmt.Sprintf("VPN port %d/%s", port, protocol)
+	if !alreadyOpen {
+		if description == "" {
+			description = fmt.Sprintf("VPN port %d/%s", port, protocol)
+		}
+
+		rules = append(rules, FirewallRule{
+			Direction:   "in",
+			Protocol:    protocol,
+			Port:        portStr,
+			SourceIPs:   []string{"0.0.0.0/0", "::/0"},
+			Description: description,
+		})
+
+		if err := setFirewallRules(rules); err != nil {
+			return err
+		}
 	}
 
-	rules = append(rules, FirewallRule{
-		Direction:   "in",
-		Protocol:    protocol,
-		Port:        portStr,
-		SourceIPs:   []string{"0.0.0.0/0", "::/0"},
-		Description: description,
-	})
+	// Локальный UFW на Hetzner
+	if err := ufwAllow(port, protocol); err != nil {
+		log.Printf("UFW: не удалось открыть %d/%s: %v", port, protocol, err)
+	}
 
-	return setFirewallRules(rules)
+	return nil
 }
 
 func CloseFirewallPort(port int, protocol string) error {
+	// Hetzner Cloud Firewall
 	if err := ensureFirewallInit(); err != nil {
 		return err
 	}
@@ -236,11 +256,74 @@ func CloseFirewallPort(port int, protocol string) error {
 		filtered = append(filtered, r)
 	}
 
-	if len(filtered) == len(rules) {
-		return nil // Правило не найдено — ничего не делаем
+	if len(filtered) < len(rules) {
+		if err := setFirewallRules(filtered); err != nil {
+			return err
+		}
 	}
 
-	return setFirewallRules(filtered)
+	// Локальный UFW на Hetzner
+	if err := ufwDeny(port, protocol); err != nil {
+		log.Printf("UFW: не удалось закрыть %d/%s: %v", port, protocol, err)
+	}
+
+	return nil
+}
+
+// --- UFW (local firewall on Hetzner) ---
+
+func ufwAllow(port int, protocol string) error {
+	rule := fmt.Sprintf("%d/%s", port, protocol)
+	cmd := exec.Command("ufw", "allow", rule)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %w", string(output), err)
+	}
+	log.Printf("UFW: opened %s", rule)
+	return nil
+}
+
+func ufwDeny(port int, protocol string) error {
+	rule := fmt.Sprintf("%d/%s", port, protocol)
+	cmd := exec.Command("ufw", "delete", "allow", rule)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %w", string(output), err)
+	}
+	log.Printf("UFW: closed %s", rule)
+	return nil
+}
+
+// GetUFWRules возвращает список открытых портов в UFW
+func GetUFWRules() ([]string, error) {
+	cmd := exec.Command("ufw", "status")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ufw status failed: %w", err)
+	}
+	return parseUFWStatus(string(output)), nil
+}
+
+func parseUFWStatus(output string) []string {
+	rules := []string{}
+	lines := strings.Split(output, "\n")
+	started := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "---") {
+			started = true
+			continue
+		}
+		if !started || line == "" {
+			continue
+		}
+		// Берём только IPv4 правила (пропускаем v6 дубли)
+		if strings.Contains(line, "(v6)") {
+			continue
+		}
+		rules = append(rules, line)
+	}
+	return rules
 }
 
 // --- Internal ---
