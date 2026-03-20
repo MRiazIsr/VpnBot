@@ -14,7 +14,7 @@ func GetTelemetConfig() gin.HandlerFunc {
 		if err := database.DB.First(&cfg).Error; err != nil {
 			// Конфига ещё нет — возвращаем дефолтный
 			c.JSON(200, database.TelemetConfig{
-				Port:      443,
+				Port:      8443,
 				TLSDomain: "dl.google.com",
 			})
 			return
@@ -39,7 +39,7 @@ func UpdateTelemetConfig() gin.HandlerFunc {
 		}
 
 		if input.Port == 0 {
-			input.Port = 443
+			input.Port = 8443
 		}
 
 		var cfg database.TelemetConfig

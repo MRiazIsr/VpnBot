@@ -77,7 +77,7 @@ type TelemetConfig struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Enabled       bool   `gorm:"default:false" json:"enabled"`
-	Port          int    `gorm:"default:443" json:"port"`
+	Port          int    `gorm:"default:8443" json:"port"`
 	TLSDomain     string `json:"tls_domain"`
 	ServerAddress string `json:"server_address"` // IP/домен для ссылок. Пусто = SERVER_IP
 	ProxyTag      string `json:"proxy_tag"`      // proxy tag от @MTProxyBot (32 hex chars)
@@ -90,8 +90,8 @@ type TelemetUser struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	TelemetConfigID uint   `gorm:"index" json:"telemet_config_id"`
-	UserID          uint   `gorm:"index" json:"user_id"`
+	TelemetConfigID uint   `gorm:"uniqueIndex:idx_telemet_user_config" json:"telemet_config_id"`
+	UserID          uint   `gorm:"uniqueIndex:idx_telemet_user_config" json:"user_id"`
 	Label           string `json:"label"`  // имя в TOML-конфиге (= user.Username)
 	Secret          string `json:"secret"` // 32-hex секрет
 

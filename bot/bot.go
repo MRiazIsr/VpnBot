@@ -469,18 +469,19 @@ func getTelemetLink(c tele.Context) (string, error) {
 		return "", fmt.Errorf("❌ Telegram Proxy не настроен.")
 	}
 
-	// Ищем или создаём TelemetUser
+	// Ищем или создаём TelemetUser (атомарно через FirstOrCreate)
 	var tu database.TelemetUser
-	if err := database.DB.Where("user_id = ? AND telemet_config_id = ?", user.ID, cfg.ID).First(&tu).Error; err != nil {
-		// Создаём новый секрет
-		tu = database.TelemetUser{
-			TelemetConfigID: cfg.ID,
-			UserID:          user.ID,
-			Label:           user.Username,
-			Secret:          service.GenerateSecret(),
-		}
-		database.DB.Create(&tu)
-		// Перегенерируем конфиг telemt
+	result := database.DB.Where("user_id = ? AND telemet_config_id = ?", user.ID, cfg.ID).
+		Attrs(database.TelemetUser{
+			Label:  user.Username,
+			Secret: service.GenerateSecret(),
+		}).
+		FirstOrCreate(&tu)
+	if result.Error != nil {
+		return "", fmt.Errorf("❌ Ошибка создания секрета прокси.")
+	}
+	if result.RowsAffected > 0 {
+		// Новый секрет создан — перегенерируем конфиг telemt
 		service.GenerateAndReloadTelemet()
 	}
 

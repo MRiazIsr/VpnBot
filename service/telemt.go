@@ -24,8 +24,8 @@ const (
 func GenerateSecret() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		log.Println("Ошибка генерации секрета:", err)
-		return ""
+		// crypto/rand failure означает критическую проблему системы
+		log.Fatalf("Критическая ошибка: не удалось сгенерировать секрет: %v", err)
 	}
 	return hex.EncodeToString(b)
 }
@@ -99,7 +99,7 @@ func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 
 	port := cfg.Port
 	if port == 0 {
-		port = 443
+		port = 8443
 	}
 	tlsDomain := cfg.TLSDomain
 	if tlsDomain == "" {

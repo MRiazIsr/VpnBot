@@ -44,6 +44,8 @@ func UpdateUserStatus() gin.HandlerFunc {
 		user.Status = input.Status
 		database.DB.Save(&user)
 		service.GenerateAndReload()
+		service.SyncTelemetUsers()
+		service.GenerateAndReloadTelemet()
 
 		c.JSON(200, user)
 	}
@@ -77,6 +79,8 @@ func UpdateUserLimit() gin.HandlerFunc {
 			if user.TrafficLimit == 0 || user.TrafficUsed < user.TrafficLimit {
 				user.Status = "active"
 				service.GenerateAndReload()
+				service.SyncTelemetUsers()
+				service.GenerateAndReloadTelemet()
 			}
 		}
 
@@ -101,6 +105,8 @@ func DeleteUser() gin.HandlerFunc {
 
 		database.DB.Delete(&user)
 		service.GenerateAndReload()
+		service.SyncTelemetUsers()
+		service.GenerateAndReloadTelemet()
 
 		c.JSON(200, gin.H{"message": "User deleted"})
 	}
