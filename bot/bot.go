@@ -193,6 +193,13 @@ func Start(token string, adminID int64) {
 			btnQR := connectMenu.Data(fmt.Sprintf("📷 %s", ib.DisplayName), "conn_qr", fmt.Sprintf("%d", ib.ID))
 			rows = append(rows, connectMenu.Row(btnLink, btnQR))
 		}
+		// Кнопка VK TURN Tunnel (если включён)
+		var turnCfg database.TurnConfig
+		if database.DB.First(&turnCfg).Error == nil && turnCfg.Enabled && turnCfg.VKJoinLink != "" {
+			btnTurn := connectMenu.Data("🌐 VK Tunnel", "conn_turn")
+			rows = append(rows, connectMenu.Row(btnTurn))
+		}
+
 		// Кнопка Telegram Proxy (если telemt включён)
 		var telemetCfg database.TelemetConfig
 		if database.DB.First(&telemetCfg).Error == nil && telemetCfg.Enabled {
@@ -330,6 +337,257 @@ func Start(token string, adminID int64) {
 ❓ Если возникли проблемы, пишите администратору.`
 
 		return c.Send(helpMsg, tele.ModeMarkdown)
+	})
+
+	// --- VK TURN Tunnel handlers ---
+
+	// Обработчик кнопки VK Tunnel — инструкция для пользователя
+	b.Handle(&tele.Btn{Unique: "conn_turn"}, func(c tele.Context) error {
+		var cfg database.TurnConfig
+		if err := database.DB.First(&cfg).Error; err != nil || !cfg.Enabled || cfg.VKJoinLink == "" {
+			return c.Send("❌ VK TURN туннель не настроен.")
+		}
+
+		instruction := service.GenerateTurnClientInstruction(ServerIP, cfg)
+		return c.Send(instruction, tele.ModeMarkdownV2)
+	})
+
+	// /turn — статус TURN-туннеля (только админ)
+	b.Handle("/turn", func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+
+		var cfg database.TurnConfig
+		if err := database.DB.First(&cfg).Error; err != nil {
+			return c.Send("⚙️ VK TURN туннель не настроен.\n\nИспользуйте `/turn_setup` для настройки.", tele.ModeMarkdown)
+		}
+
+		running := service.IsTurnProxyRunning()
+		statusEmoji := "🔴"
+		statusText := "Остановлен"
+		if running {
+			statusEmoji = "🟢"
+			statusText = "Работает"
+		}
+
+		link := cfg.VKJoinLink
+		if link == "" {
+			link = "не задана"
+		}
+
+		msg := fmt.Sprintf(
+			"🌐 *VK TURN Tunnel*\n\n"+
+				"%s Статус: *%s*\n"+
+				"🔗 VK ссылка: `%s`\n"+
+				"🔌 Порт туннеля: `%d`\n"+
+				"➡️ Forward порт: `%d`\n"+
+				"📡 Потоков: `%d`\n"+
+				"📝 %s",
+			statusEmoji, statusText,
+			link,
+			cfg.TunnelPort,
+			cfg.ForwardPort,
+			cfg.Streams,
+			cfg.StatusMsg,
+		)
+
+		turnMenu := &tele.ReplyMarkup{}
+		rows := []tele.Row{}
+		if running {
+			btnStop := turnMenu.Data("⏹ Остановить", "turn_stop_btn")
+			btnRestart := turnMenu.Data("🔄 Перезапустить", "turn_restart_btn")
+			rows = append(rows, turnMenu.Row(btnStop, btnRestart))
+		} else {
+			btnStart := turnMenu.Data("▶️ Запустить", "turn_start_btn")
+			rows = append(rows, turnMenu.Row(btnStart))
+		}
+		btnTest := turnMenu.Data("🧪 Тест credentials", "turn_test_btn")
+		rows = append(rows, turnMenu.Row(btnTest))
+		turnMenu.Inline(rows...)
+
+		return c.Send(msg, tele.ModeMarkdown, turnMenu)
+	})
+
+	// /turn_setup — полная настройка (только админ)
+	b.Handle("/turn_setup", func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+
+		// Проверяем есть ли VK токен в env или в аргументе
+		vkToken := strings.TrimSpace(strings.TrimPrefix(c.Text(), "/turn_setup"))
+		if vkToken == "" {
+			vkToken = os.Getenv("VK_TOKEN")
+		}
+
+		if vkToken == "" {
+			return c.Send(
+				"⚙️ *Настройка VK TURN туннеля*\n\n"+
+					"Для создания VK-звонков нужен VK токен\\.\n\n"+
+					"*Как получить:*\n"+
+					"1\\. Зарегистрируйте отдельный VK\\-аккаунт\n"+
+					"2\\. Создайте Standalone\\-приложение: `vk.com/apps?act=manage`\n"+
+					"3\\. Получите токен:\n"+
+					"`https://oauth.vk.com/authorize?client_id=APP_ID&scope=calls&redirect_uri=https://oauth.vk.com/blank.html&response_type=token&v=5.264`\n"+
+					"4\\. Скопируйте `access_token` из URL\n\n"+
+					"Отправьте: `/turn_setup <ваш_токен>`\n"+
+					"Или задайте `VK_TOKEN` в env и повторите `/turn_setup`",
+				tele.ModeMarkdownV2,
+			)
+		}
+
+		c.Send("⏳ Устанавливаю vk-turn-proxy server...")
+
+		// Создаём или обновляем конфиг
+		var cfg database.TurnConfig
+		if database.DB.First(&cfg).Error != nil {
+			cfg = database.TurnConfig{
+				Enabled:     true,
+				VKToken:     vkToken,
+				TunnelPort:  56000,
+				ForwardPort: 8444,
+				Streams:     16,
+			}
+			database.DB.Create(&cfg)
+		} else {
+			cfg.Enabled = true
+			cfg.VKToken = vkToken
+			database.DB.Save(&cfg)
+		}
+
+		// Создаём VK-звонок
+		c.Send("📞 Создаю VK-звонок...")
+		joinLink, callID, err := service.CreateVKCall(vkToken)
+		if err != nil {
+			return c.Send(fmt.Sprintf("❌ Ошибка создания VK-звонка: %s\n\nМожете задать ссылку вручную: `/turn_link <url>`", err.Error()), tele.ModeMarkdown)
+		}
+
+		cfg.VKJoinLink = joinLink
+		cfg.VKCallID = callID
+		database.DB.Save(&cfg)
+
+		c.Send(fmt.Sprintf("✅ VK-звонок создан: `%s`", joinLink), tele.ModeMarkdown)
+
+		// Устанавливаем и запускаем сервис
+		if err := service.SetupTurnProxy(); err != nil {
+			return c.Send(fmt.Sprintf("❌ Ошибка настройки: %s", err.Error()))
+		}
+
+		return c.Send("✅ VK TURN туннель настроен и запущен!\n\nТеперь пользователи увидят кнопку \"🌐 VK Tunnel\" в меню подключения.")
+	})
+
+	// /turn_link — задать ссылку VK-звонка вручную (только админ)
+	b.Handle("/turn_link", func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+
+		link := strings.TrimSpace(strings.TrimPrefix(c.Text(), "/turn_link"))
+		if link == "" {
+			return c.Send("Использование: `/turn_link https://vk.com/call/join/...`", tele.ModeMarkdown)
+		}
+
+		if !strings.Contains(link, "vk.com/call/join/") {
+			return c.Send("❌ Неверный формат ссылки. Ожидается: `https://vk.com/call/join/...`", tele.ModeMarkdown)
+		}
+
+		var cfg database.TurnConfig
+		if database.DB.First(&cfg).Error != nil {
+			cfg = database.TurnConfig{
+				Enabled:     true,
+				VKJoinLink:  link,
+				TunnelPort:  56000,
+				ForwardPort: 8444,
+				Streams:     16,
+			}
+			database.DB.Create(&cfg)
+		} else {
+			cfg.VKJoinLink = link
+			cfg.Enabled = true
+			database.DB.Save(&cfg)
+		}
+
+		// Тестируем credentials
+		c.Send("🧪 Проверяю ссылку...")
+		turnServer, err := service.TestTurnCreds(link)
+		if err != nil {
+			return c.Send(fmt.Sprintf("⚠️ Ссылка сохранена, но тест credentials не прошёл: %s\n\nВозможно, звонок завершён.", err.Error()))
+		}
+
+		return c.Send(fmt.Sprintf("✅ Ссылка сохранена и проверена!\nTURN сервер: `%s`", turnServer), tele.ModeMarkdown)
+	})
+
+	// /turn_stop — остановить туннель (только админ)
+	b.Handle("/turn_stop", func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+
+		if err := service.StopTurnProxy(); err != nil {
+			return c.Send(fmt.Sprintf("❌ Ошибка: %s", err.Error()))
+		}
+
+		var cfg database.TurnConfig
+		if database.DB.First(&cfg).Error == nil {
+			cfg.Enabled = false
+			database.DB.Save(&cfg)
+		}
+
+		return c.Send("✅ VK TURN туннель остановлен.")
+	})
+
+	// Inline кнопки управления TURN
+	b.Handle(&tele.Btn{Unique: "turn_stop_btn"}, func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+		if err := service.StopTurnProxy(); err != nil {
+			return c.Respond(&tele.CallbackResponse{Text: "Ошибка: " + err.Error()})
+		}
+		c.Respond(&tele.CallbackResponse{Text: "Остановлен"})
+		// Обновляем сообщение
+		return c.Edit("🌐 VK TURN Tunnel\n\n🔴 Статус: Остановлен")
+	})
+
+	b.Handle(&tele.Btn{Unique: "turn_start_btn"}, func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+		if err := service.StartTurnProxy(); err != nil {
+			return c.Respond(&tele.CallbackResponse{Text: "Ошибка: " + err.Error()})
+		}
+		c.Respond(&tele.CallbackResponse{Text: "Запущен"})
+		return c.Edit("🌐 VK TURN Tunnel\n\n🟢 Статус: Работает")
+	})
+
+	b.Handle(&tele.Btn{Unique: "turn_restart_btn"}, func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+		service.StopTurnProxy()
+		if err := service.StartTurnProxy(); err != nil {
+			return c.Respond(&tele.CallbackResponse{Text: "Ошибка: " + err.Error()})
+		}
+		c.Respond(&tele.CallbackResponse{Text: "Перезапущен"})
+		return c.Edit("🌐 VK TURN Tunnel\n\n🟢 Статус: Работает (перезапущен)")
+	})
+
+	b.Handle(&tele.Btn{Unique: "turn_test_btn"}, func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+		var cfg database.TurnConfig
+		if database.DB.First(&cfg).Error != nil || cfg.VKJoinLink == "" {
+			return c.Respond(&tele.CallbackResponse{Text: "VK ссылка не задана"})
+		}
+
+		c.Respond(&tele.CallbackResponse{Text: "Тестирую..."})
+		turnServer, err := service.TestTurnCreds(cfg.VKJoinLink)
+		if err != nil {
+			return c.Send(fmt.Sprintf("❌ Тест не прошёл: %s", err.Error()))
+		}
+		return c.Send(fmt.Sprintf("✅ Credentials работают!\nTURN сервер: `%s`", turnServer), tele.ModeMarkdown)
 	})
 
 	b.Handle("/broadcast", func(c tele.Context) error {

@@ -25,6 +25,11 @@ func main() {
 		log.Println("Error setting up telemt:", err)
 	}
 
+	// Настройка VK TURN tunnel если включён
+	if err := service.SetupTurnProxy(); err != nil {
+		log.Println("Error setting up VK TURN tunnel:", err)
+	}
+
 	botToken := os.Getenv("BOT_TOKEN")
 	adminID := int64(124343839)
 	if envAdminID := os.Getenv("ADMIN_ID"); envAdminID != "" {

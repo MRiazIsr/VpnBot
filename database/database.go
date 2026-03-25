@@ -83,6 +83,24 @@ type TelemetConfig struct {
 	ProxyTag      string `json:"proxy_tag"`      // proxy tag от @MTProxyBot (32 hex chars)
 }
 
+// TurnConfig — настройки VK TURN туннеля (синглтон, одна запись)
+type TurnConfig struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Enabled     bool   `gorm:"default:false" json:"enabled"`
+	VKToken     string `json:"-"`                                // VK user token для calls.start (не выдаём в JSON)
+	VKJoinLink  string `json:"vk_join_link"`                     // Активная ссылка звонка
+	VKCallID    string `json:"vk_call_id"`                       // ID текущего звонка
+	TunnelPort  int    `gorm:"default:56000" json:"tunnel_port"` // Порт DTLS listener
+	ForwardPort int    `gorm:"default:8444" json:"forward_port"` // Порт sing-box для forward
+	Streams     int    `gorm:"default:16" json:"streams"`        // Кол-во параллельных потоков клиента
+	Status      string `gorm:"default:'inactive'" json:"status"` // inactive/active/error
+	StatusMsg   string `json:"status_message"`
+}
+
 // TelemetUser — секрет пользователя для MTProto прокси
 type TelemetUser struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
@@ -140,7 +158,7 @@ func Init(path string) {
 	}
 
 	// Миграция схемы
-	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{})
+	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{}, &TurnConfig{})
 	if err != nil {
 		log.Fatal("Migration failed:", err)
 	}
