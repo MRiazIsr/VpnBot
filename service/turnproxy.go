@@ -48,14 +48,14 @@ func InstallTurnProxy() error {
 	}
 
 	downloadURL := fmt.Sprintf(
-		"https://github.com/%s/releases/download/%s/server_%s_%s",
+		"https://github.com/%s/releases/download/%s/server-%s-%s",
 		TurnProxyRepo, TurnProxyVersion, goos, arch,
 	)
 	log.Println("Скачиваем vk-turn-proxy server:", downloadURL)
 
-	// Скачиваем бинарник
+	// Скачиваем бинарник (--content-on-error=off чтобы не сохранять 404 HTML)
 	cmd := exec.Command("sh", "-c", fmt.Sprintf(
-		"wget -qO '%s' '%s' && chmod +x '%s'",
+		"wget -qO '%s' --tries=2 '%s' && chmod +x '%s'",
 		TurnProxyBinaryPath, downloadURL, TurnProxyBinaryPath,
 	))
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -446,9 +446,9 @@ func GenerateTurnClientInstruction(serverIP string, cfg database.TurnConfig) str
 		"🌐 *VK TURN Tunnel*\n\n"+
 			"Этот режим маскирует VPN под VK-звонок\\. Трафик идёт через серверы VK и не может быть заблокирован\\.\n\n"+
 			"*1\\. Скачайте клиент:*\n"+
-			"[Windows](https://github.com/%s/releases/download/%s/client_windows_amd64.exe)\n"+
-			"[Linux](https://github.com/%s/releases/download/%s/client_linux_amd64)\n"+
-			"[macOS](https://github.com/%s/releases/download/%s/client_darwin_amd64)\n\n"+
+			"[Windows](https://github.com/%s/releases/download/%s/client-windows-amd64.exe)\n"+
+			"[Linux](https://github.com/%s/releases/download/%s/client-linux-amd64)\n"+
+			"[macOS](https://github.com/%s/releases/download/%s/client-darwin-amd64)\n\n"+
 			"*2\\. Запустите клиент:*\n"+
 			"`./client -udp -peer %s -vk-link %s -n %d`\n\n"+
 			"*3\\. Настройте Hiddify:*\n"+
