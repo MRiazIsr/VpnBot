@@ -29,8 +29,19 @@ const ApiAddr = "127.0.0.1:10000" // Порт для gRPC API
 type SingBoxConfig struct {
 	Log          LogConfig           `json:"log"`
 	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
-	Inbounds     []SingboxInbound     `json:"inbounds"`
+	Inbounds     []SingboxInbound    `json:"inbounds"`
 	Outbounds    []OutboundConfig    `json:"outbounds"`
+	Route        *RouteConfig        `json:"route,omitempty"`
+}
+
+type RouteConfig struct {
+	Rules []RouteRule `json:"rules,omitempty"`
+	Final string      `json:"final,omitempty"`
+}
+
+type RouteRule struct {
+	IPCIDR   []string `json:"ip_cidr,omitempty"`
+	Outbound string   `json:"outbound"`
 }
 
 type ExperimentalConfig struct {
@@ -258,6 +269,28 @@ func GenerateAndReload() error {
 		Outbounds: []OutboundConfig{
 			{Type: "direct", Tag: "direct"},
 			{Type: "block", Tag: "block"},
+		},
+		Route: &RouteConfig{
+			Rules: []RouteRule{
+				{
+					IPCIDR: []string{
+						"10.0.0.0/8",
+						"172.16.0.0/12",
+						"192.168.0.0/16",
+						"169.254.0.0/16",
+						"224.0.0.0/4",
+						"240.0.0.0/4",
+						"0.0.0.0/8",
+						"100.64.0.0/10",
+						"fc00::/7",
+						"fe80::/10",
+						"ff00::/8",
+						"::/128",
+					},
+					Outbound: "block",
+				},
+			},
+			Final: "direct",
 		},
 	}
 
