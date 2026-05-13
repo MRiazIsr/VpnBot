@@ -141,15 +141,28 @@ func GenerateWGKeypair() (private string, public string, err error) {
 
 // ensureWireGuardToolsInstalled — apt-get install wireguard-tools если бинаря wg нет.
 // Нужен для wg-quick@wg0 (генерация ключей теперь чисто Go).
+// `apt-get update` сделан non-fatal — поломанный сторонний репо (например Caddy/Cloudsmith
+// с истёкшим GPG ключом) не должен блокировать установку из официального Debian.
 func ensureWireGuardToolsInstalled() error {
 	if exec.Command("sh", "-c", "command -v wg-quick >/dev/null 2>&1").Run() == nil {
 		return nil
 	}
 	log.Println("wireguard: устанавливаем wireguard-tools...")
+
+	// Шаг 1: update тихо, не падаем при NO_PUBKEY/сломанных репах.
+	exec.Command("sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 || true").Run()
+
+	// Шаг 2: установка. Если ещё нет cache — пробуем без update, но с фоллбэком на --fix-missing.
 	out, err := exec.Command("sh", "-c",
-		"DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard wireguard-tools").CombinedOutput()
+		"DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard wireguard-tools || "+
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing wireguard wireguard-tools").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("apt-get install wireguard-tools: %w: %s", err, string(out))
+	}
+
+	// Проверка пост-install.
+	if exec.Command("sh", "-c", "command -v wg-quick >/dev/null 2>&1").Run() != nil {
+		return fmt.Errorf("wg-quick всё ещё не найден после apt install — проверьте репозитории (`apt-get update` вручную): %s", string(out))
 	}
 	return nil
 }
