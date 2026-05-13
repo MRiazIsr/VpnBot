@@ -151,8 +151,27 @@ func IsTelemtRuVDSRunning() bool {
 		return false
 	}
 	defer client.Close()
-	out, err := runSSH(client, "systemctl is-active --quiet telemt && echo running")
-	return err == nil && strings.TrimSpace(out) == "running"
+	out, _ := runSSH(client, "systemctl is-active telemt 2>/dev/null; true")
+	return strings.TrimSpace(out) == "active"
+}
+
+// TelemtRuVDSLogs — последние N строк журнала telemt на RuVDS.
+func TelemtRuVDSLogs(lines int) (string, error) {
+	if lines <= 0 {
+		lines = 50
+	}
+	client, err := sshConnect()
+	if err != nil {
+		return "", fmt.Errorf("SSH: %w", err)
+	}
+	defer client.Close()
+	out, err := runSSH(client, fmt.Sprintf(
+		"journalctl -u telemt -n %d --no-pager 2>&1; echo '---'; systemctl status telemt --no-pager 2>&1; "+
+			"echo '--- /etc/telemt/telemt.toml ---'; cat /etc/telemt/telemt.toml 2>&1; true", lines))
+	if err != nil {
+		return out, fmt.Errorf("journalctl: %w", err)
+	}
+	return out, nil
 }
 
 // SetupTelemtRuVDS — полный цикл установки telemt на RuVDS.

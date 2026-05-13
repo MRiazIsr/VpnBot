@@ -100,6 +100,7 @@ func SetupRouter(r *gin.Engine) {
 			auth.POST("/singbox/ruvds/stop", handlers.StopSingboxRuVDS())
 			auth.GET("/singbox/ruvds/status", handlers.GetSingboxRuVDSStatus())
 			auth.GET("/singbox/ruvds/config", handlers.PreviewSingboxRuVDSConfig())
+			auth.GET("/singbox/ruvds/logs", handlers.GetSingboxRuVDSLogs())
 
 			// Telemt mirror on RuVDS
 			auth.POST("/telemt/ruvds/setup", handlers.SetupTelemtRuVDS())
@@ -107,6 +108,7 @@ func SetupRouter(r *gin.Engine) {
 			auth.POST("/telemt/ruvds/start", handlers.StartTelemtRuVDS())
 			auth.POST("/telemt/ruvds/stop", handlers.StopTelemtRuVDS())
 			auth.GET("/telemt/ruvds/status", handlers.GetTelemtRuVDSStatus())
+			auth.GET("/telemt/ruvds/logs", handlers.GetTelemtRuVDSLogs())
 		}
 	}
 

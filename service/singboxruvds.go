@@ -141,9 +141,29 @@ func IsSingboxRuVDSRunning() bool {
 		return false
 	}
 	defer client.Close()
-	out, err := runSSH(client, fmt.Sprintf("systemctl is-active --quiet %s && echo running",
-		SingboxRuVDSServiceName))
-	return err == nil && strings.TrimSpace(out) == "running"
+	// `systemctl is-active <svc>` всегда выводит state в stdout ("active"/"inactive"/"failed"/...).
+	// `; true` гарантирует exit 0, чтобы runSSH вернул output без ошибки.
+	out, _ := runSSH(client, fmt.Sprintf("systemctl is-active %s 2>/dev/null; true", SingboxRuVDSServiceName))
+	return strings.TrimSpace(out) == "active"
+}
+
+// SingboxRuVDSLogs — последние N строк журнала sing-box на RuVDS.
+func SingboxRuVDSLogs(lines int) (string, error) {
+	if lines <= 0 {
+		lines = 50
+	}
+	client, err := sshConnect()
+	if err != nil {
+		return "", fmt.Errorf("SSH: %w", err)
+	}
+	defer client.Close()
+	out, err := runSSH(client, fmt.Sprintf(
+		"journalctl -u %s -n %d --no-pager 2>&1; echo '---'; systemctl status %s --no-pager 2>&1; true",
+		SingboxRuVDSServiceName, lines, SingboxRuVDSServiceName))
+	if err != nil {
+		return out, fmt.Errorf("journalctl: %w", err)
+	}
+	return out, nil
 }
 
 // CleanupRuVDSDNAT — удаляет iptables DNAT правила на RuVDS для VPN-портов,

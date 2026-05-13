@@ -80,3 +80,15 @@ func PreviewSingboxRuVDSConfig() gin.HandlerFunc {
 		c.Data(200, "application/json", cfgJSON)
 	}
 }
+
+// GET /api/singbox/ruvds/logs — журнал systemd с RuVDS
+func GetSingboxRuVDSLogs() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		out, err := service.SingboxRuVDSLogs(80)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error(), "logs": out})
+			return
+		}
+		c.Data(200, "text/plain; charset=utf-8", []byte(out))
+	}
+}

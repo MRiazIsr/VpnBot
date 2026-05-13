@@ -67,3 +67,15 @@ func GetTelemtRuVDSStatus() gin.HandlerFunc {
 		})
 	}
 }
+
+// GET /api/telemt/ruvds/logs — журнал systemd + текущий toml с RuVDS
+func GetTelemtRuVDSLogs() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		out, err := service.TelemtRuVDSLogs(80)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error(), "logs": out})
+			return
+		}
+		c.Data(200, "text/plain; charset=utf-8", []byte(out))
+	}
+}
