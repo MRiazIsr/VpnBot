@@ -201,19 +201,30 @@ func EnsureHetznerWG(cfg database.WireGuardConfig) error {
 		ruvdsWGIP = "10.8.0.2"
 	}
 
+	// MASQUERADE + FORWARD ACCEPT для wg0↔eth0.
+	// FORWARD-правила критичны: на Ubuntu/UFW DEFAULT_FORWARD_POLICY=DROP, и без
+	// этих ACCEPT-ов пакеты от RuVDS не доходят до MASQUERADE — handshake живёт,
+	// данные не идут.
 	wgConf := fmt.Sprintf(`# Managed by vpnbot, do not edit manually
 [Interface]
 Address = %s/24
 ListenPort = %d
 PrivateKey = %s
 PostUp = iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o %s -j MASQUERADE
+PostUp = iptables -I FORWARD -i %%i -o %s -j ACCEPT
+PostUp = iptables -I FORWARD -i %s -o %%i -m state --state RELATED,ESTABLISHED -j ACCEPT
 PostDown = iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o %s -j MASQUERADE
+PostDown = iptables -D FORWARD -i %%i -o %s -j ACCEPT
+PostDown = iptables -D FORWARD -i %s -o %%i -m state --state RELATED,ESTABLISHED -j ACCEPT
 
 [Peer]
 # RuVDS sing-box userspace WG client
 PublicKey = %s
 AllowedIPs = %s/32
-`, wgIP, port, cfg.HetznerPrivateKey, iface, iface, cfg.RuVDSPublicKey, ruvdsWGIP)
+`, wgIP, port, cfg.HetznerPrivateKey,
+		iface, iface, iface,
+		iface, iface, iface,
+		cfg.RuVDSPublicKey, ruvdsWGIP)
 
 	if err := os.MkdirAll("/etc/wireguard", 0700); err != nil {
 		return fmt.Errorf("mkdir /etc/wireguard: %w", err)
