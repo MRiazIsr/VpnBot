@@ -92,3 +92,21 @@ func GetSingboxRuVDSLogs() gin.HandlerFunc {
 		c.Data(200, "text/plain; charset=utf-8", []byte(out))
 	}
 }
+
+// POST /api/singbox/ruvds/rollback — emergency: остановить sing-box на RuVDS
+// + восстановить iptables DNAT (откат к схеме «Client → RuVDS DNAT → Hetzner»).
+// Используется когда новая схема сломалась и нужно срочно вернуть старое поведение.
+func RollbackRuVDSSingbox() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Останавливаем RuVDS sing-box чтобы не было путаницы с портами
+		service.StopSingboxRuVDS()
+		// Восстанавливаем iptables DNAT
+		if err := service.RestoreRuVDSDNAT(); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{
+			"message": "Откат выполнен: RuVDS sing-box остановлен, iptables DNAT восстановлен. Старые подписки снова работают через релэй.",
+		})
+	}
+}

@@ -166,9 +166,10 @@ func SingboxRuVDSLogs(lines int) (string, error) {
 	return out, nil
 }
 
-// CleanupRuVDSDNAT — удаляет iptables DNAT правила на RuVDS для VPN-портов,
-// чтобы они не перехватывали трафик до того, как sing-box на RuVDS его получит.
-// Идемпотентна.
+// CleanupRuVDSDNAT — удаляет iptables DNAT правила на RuVDS для VPN-портов.
+// ВНИМАНИЕ: разрывает старую схему «Client → RuVDS DNAT → Hetzner». Использовать
+// ТОЛЬКО осознанно после того как убедились что RuVDS sing-box работает и
+// все клиенты согласны на новую схему. НЕ вызывается из Setup автоматически.
 func CleanupRuVDSDNAT() error {
 	if !IsPortForwardConfigured() {
 		return nil
@@ -204,6 +205,38 @@ func CleanupRuVDSDNAT() error {
 	return nil
 }
 
+// RestoreRuVDSDNAT — восстанавливает iptables DNAT для всех enabled VPN-портов
+// (откат к схеме «Client → RuVDS:port → DNAT → Hetzner»). Идемпотентна.
+func RestoreRuVDSDNAT() error {
+	if !IsPortForwardConfigured() {
+		return fmt.Errorf("RUVDS_IP не задан")
+	}
+
+	var inbounds []database.InboundConfig
+	database.DB.Where("enabled = ?", true).Find(&inbounds)
+	if len(inbounds) == 0 {
+		return nil
+	}
+
+	var firstErr error
+	for _, ib := range inbounds {
+		proto := "tcp"
+		if ib.Protocol == "hysteria2" {
+			proto = "udp"
+		}
+		if err := AddForward(ib.ListenPort, proto); err != nil {
+			log.Printf("RestoreRuVDSDNAT: %d/%s: %v", ib.ListenPort, proto, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	if firstErr == nil {
+		log.Println("RestoreRuVDSDNAT: DNAT-правила восстановлены для всех enabled inbound портов")
+	}
+	return firstErr
+}
+
 // SetupSingboxRuVDS — полный цикл установки sing-box на RuVDS.
 func SetupSingboxRuVDS() error {
 	if !IsRuVDSEnabled() {
@@ -220,9 +253,13 @@ func SetupSingboxRuVDS() error {
 	if err := EnsureSingboxRuVDSService(); err != nil {
 		return err
 	}
-	if err := CleanupRuVDSDNAT(); err != nil {
-		log.Printf("sing-box RuVDS: cleanup DNAT warn: %v", err)
-	}
+	// ВАЖНО: не вызываем CleanupRuVDSDNAT здесь, чтобы не сломать старую схему.
+	// DNAT остаётся, RuVDS sing-box слушает порты, но трафик к старым портам
+	// всё равно идёт через DNAT (PREROUTING срабатывает до local listen).
+	// Чтобы клиенты пошли через RuVDS sing-box, выпустите им /sub-ruvds/:token
+	// (там по умолчанию ссылки идут на RuVDS:port, и пока DNAT в pre-routing
+	// перехватывает — нужно перенаправить sing-box на другой порт или
+	// удалить DNAT для этого порта осознанно через CleanupRuVDSDNAT).
 
 	cfgJSON, err := GenerateRuVDSConfig()
 	if err != nil {
