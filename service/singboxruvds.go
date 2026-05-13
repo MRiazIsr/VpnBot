@@ -12,11 +12,17 @@ const (
 	SingboxRuVDSConfigPath  = "/etc/sing-box/config.json"
 	SingboxRuVDSServiceName = "sing-box"
 	SingboxRuVDSServicePath = "/etc/systemd/system/sing-box.service"
-	SingboxRuVDSVersion     = "1.10.5"
-	SingboxRuVDSArch        = "linux-amd64"
+	// Версия для свежей установки. Должна быть ≥1.11 для xhttp-транспорта,
+	// который у нас используется в одном из inbounds. 1.13.11 — последний
+	// стабильный релиз SagerNet с нативной поддержкой xhttp.
+	SingboxRuVDSVersion = "1.13.11"
+	SingboxRuVDSArch    = "linux-amd64"
 )
 
 // InstallSingboxRuVDS — скачивает sing-box на RuVDS через SSH. Идемпотентна.
+// Skip-условие: если бинарь уже есть и `sing-box version` отрабатывает,
+// не трогаем (на проде может быть custom-build с xhttp-патчем, который мы
+// не хотим перезаписывать на vanilla-релиз).
 func InstallSingboxRuVDS() error {
 	client, err := sshConnect()
 	if err != nil {
@@ -24,9 +30,8 @@ func InstallSingboxRuVDS() error {
 	}
 	defer client.Close()
 
-	out, _ := runSSH(client, fmt.Sprintf("test -x %s && %s version 2>/dev/null | head -1",
-		SingboxRuVDSBinaryPath, SingboxRuVDSBinaryPath))
-	if strings.Contains(out, SingboxRuVDSVersion) {
+	out, runErr := runSSH(client, fmt.Sprintf("%s version 2>&1 | head -1", SingboxRuVDSBinaryPath))
+	if runErr == nil && strings.Contains(out, "sing-box version") {
 		log.Println("sing-box на RuVDS уже установлен:", strings.TrimSpace(out))
 		return nil
 	}
