@@ -27,9 +27,9 @@ VPN management system: Go backend + Telegram bot + Next.js admin panel.
 
 ### Packages
 
-- **`database/`** — GORM models (`User`, `InboundConfig`, `ConnectionLog`), SQLite init with auto-migration and seed data
-- **`service/`** — sing-box JSON config generation (`GenerateAndReload()`), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go`), connectivity checks (`network.go`)
-- **`api/handlers/`** — REST handlers: auth, users, inbounds CRUD, stats, public subscription endpoints
+- **`database/`** — GORM models (`User`, `InboundConfig`, `ConnectionLog`, `WireGuardConfig`, `TelemetConfig`, `TurnConfig`), SQLite init with auto-migration and seed data
+- **`service/`** — sing-box JSON config generation (`GenerateAndReload()` for Hetzner, `GenerateAndReloadRuVDS()` for RuVDS mirror), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go`), connectivity checks (`network.go`), VK TURN tunnel (`turnproxy.go`), WireGuard tunnel RuVDS↔Hetzner (`wireguard.go`), sing-box mirror on RuVDS via SSH (`singboxruvds.go`), telemt mirror on RuVDS via SSH (`telemtruvds.go`)
+- **`api/handlers/`** — REST handlers: auth, users, inbounds CRUD, stats, public subscription endpoints (`/sub/:token` for Hetzner, `/sub-ruvds/:token` for RuVDS)
 - **`api/middleware/`** — CORS and JWT Bearer auth
 - **`api/router/`** — Route registration under `/api` with auth group
 - **`bot/`** — Telegram bot (telebot.v3) with dynamic connection buttons from DB, QR codes
@@ -67,14 +67,21 @@ Drives both sing-box config generation and subscription links. Key fields:
 - `RUVDS_SSH_KEY_PATH` — Path to SSH private key (default: ~/.ssh/id_rsa)
 - `RUVDS_SSH_PORT` — SSH port (default: 22)
 
-Network topology: `Client → RuVDS (iptables DNAT/MASQUERADE) → Hetzner (sing-box)`. Hetzner Cloud Firewall controls inbound access; RuVDS iptables handles port forwarding.
+Network topology — два независимых фронт-энда, существующих одновременно:
+- **Legacy:** `Client → Hetzner (sing-box, direct egress)` — для старых подписок на Hetzner-IP. Сохраняется как есть, ссылки не ломаются.
+- **RuVDS-фронт (опц., через WG):** `Client → RuVDS (sing-box mirror) → WireGuard userspace → Hetzner kernel WG (wg-quick@wg0) + MASQUERADE → Internet`. Используется когда `WireGuardConfig.Enabled=true` и `/sub-ruvds/:token` подписка. MTProto (telemt) на RuVDS — egress напрямую с русского IP к Telegram middle-proxy.
+
+Hetzner Cloud Firewall controls inbound access; RuVDS iptables — legacy DNAT (для совместимости), новые VPN-порты обслуживаются sing-box на RuVDS напрямую. WireGuard порт (UDP 51820 по умолчанию) автоматически открывается через `OpenFirewallPort()` при `SetupWireGuard()`.
 
 ## API Structure
 
-- Public: `GET /sub/:token`
+- Public: `GET /sub/:token` (Hetzner-направленная, backward compat) — `GET /sub-ruvds/:token` (RuVDS-направленная)
 - Auth: `POST /api/login` → JWT
 - Protected: `/api/users/*`, `/api/inbounds/*`, `/api/inbounds/validate-sni`, `/api/stats`, `POST /api/reload`
 - Network: `/api/network/status`, `/api/network/firewall/*`, `/api/network/forwards/*`, `/api/network/ping`, `/api/network/check-all`
+- WireGuard: `/api/wireguard/{config,setup,restart,stop,status}` — управление wg-quick@wg0 на Hetzner
+- Sing-box RuVDS: `/api/singbox/ruvds/{setup,reload,start,stop,status,config}` — управление зеркалом sing-box на RuVDS через SSH
+- Telemt RuVDS: `/api/telemt/ruvds/{setup,reload,start,stop,status}` — управление зеркалом MTProto на RuVDS через SSH
 
 Server listens on `:8085` (proxied via nginx).
 

@@ -91,9 +91,9 @@ func InstallTelemt() error {
 	return nil
 }
 
-// GenerateTelemetConfig генерирует TOML-конфиг и записывает в /etc/telemt.toml
-func GenerateTelemetConfig(cfg database.TelemetConfig) error {
-	// Получаем всех telemetUser для этого конфига
+// BuildTelemetConfigTOML строит TOML-конфиг telemt в виде байтов (без записи в файл).
+// Используется обоими хостами: локальная запись на Hetzner и SSH-деплой на RuVDS.
+func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 	var telemetUsers []database.TelemetUser
 	database.DB.Where("telemet_config_id = ?", cfg.ID).Find(&telemetUsers)
 
@@ -108,7 +108,6 @@ func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 
 	var sb strings.Builder
 
-	// [general]
 	sb.WriteString("[general]\n")
 	if cfg.ProxyTag != "" {
 		sb.WriteString(fmt.Sprintf("ad_tag = \"%s\"\n", cfg.ProxyTag))
@@ -118,41 +117,39 @@ func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 	}
 	sb.WriteString("\n")
 
-	// [general.modes]
 	sb.WriteString("[general.modes]\n")
 	sb.WriteString("classic = false\n")
 	sb.WriteString("secure = false\n")
 	sb.WriteString("tls = true\n")
 	sb.WriteString("\n")
 
-	// [server]
 	sb.WriteString("[server]\n")
 	sb.WriteString(fmt.Sprintf("port = %d\n", port))
 	sb.WriteString("\n")
 
-	// [server.api]
 	sb.WriteString("[server.api]\n")
 	sb.WriteString("enabled = true\n")
 	sb.WriteString("\n")
 
-	// [censorship]
 	sb.WriteString("[censorship]\n")
 	sb.WriteString(fmt.Sprintf("tls_domain = \"%s\"\n", tlsDomain))
 	sb.WriteString("\n")
 
-	// [access.users]
 	sb.WriteString("[access.users]\n")
 	for _, tu := range telemetUsers {
 		sb.WriteString(fmt.Sprintf("%s = \"%s\"\n", tu.Label, tu.Secret))
 	}
 
+	return []byte(sb.String())
+}
+
+// GenerateTelemetConfig пишет TOML-конфиг telemt локально на Hetzner.
+func GenerateTelemetConfig(cfg database.TelemetConfig) error {
 	os.MkdirAll(TelemetConfigDir, 0755)
-	err := os.WriteFile(TelemetConfigPath, []byte(sb.String()), 0644)
-	if err != nil {
+	if err := os.WriteFile(TelemetConfigPath, BuildTelemetConfigTOML(cfg), 0644); err != nil {
 		log.Println("Ошибка записи конфига telemt:", err)
 		return err
 	}
-
 	log.Println("Конфиг telemt записан:", TelemetConfigPath)
 	return nil
 }
@@ -267,23 +264,27 @@ func SetupTelemet() error {
 	return StartTelemet()
 }
 
-// GenerateAndReloadTelemet перегенерирует конфиг и перезапускает telemt
+// GenerateAndReloadTelemet перегенерирует конфиг и перезапускает telemt.
+// Если включён RuVDS-вариант (TelemetConfig.RuVDSEnabled) — также деплоит на RuVDS через SSH.
 func GenerateAndReloadTelemet() {
 	var cfg database.TelemetConfig
 	if err := database.DB.First(&cfg).Error; err != nil {
 		return
 	}
 
-	if !cfg.Enabled {
-		return
+	if cfg.Enabled {
+		if err := GenerateTelemetConfig(cfg); err != nil {
+			log.Println("Ошибка генерации конфига telemt:", err)
+		} else {
+			ReloadTelemet()
+		}
 	}
 
-	if err := GenerateTelemetConfig(cfg); err != nil {
-		log.Println("Ошибка генерации конфига telemt:", err)
-		return
+	if cfg.RuVDSEnabled {
+		if err := GenerateAndReloadTelemtRuVDS(); err != nil {
+			log.Println("RuVDS telemt reload error:", err)
+		}
 	}
-
-	ReloadTelemet()
 }
 
 // SyncTelemetUsers синхронизирует TelemetUser с активными юзерами

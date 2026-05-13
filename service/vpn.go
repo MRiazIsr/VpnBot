@@ -29,8 +29,20 @@ const ApiAddr = "127.0.0.1:10000" // Порт для gRPC API
 type SingBoxConfig struct {
 	Log          LogConfig           `json:"log"`
 	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
-	Inbounds     []SingboxInbound     `json:"inbounds"`
+	Inbounds     []SingboxInbound    `json:"inbounds"`
 	Outbounds    []OutboundConfig    `json:"outbounds"`
+	Route        *RouteConfig        `json:"route,omitempty"`
+}
+
+type RouteConfig struct {
+	Final string      `json:"final,omitempty"`
+	Rules []RouteRule `json:"rules,omitempty"`
+}
+
+type RouteRule struct {
+	DomainSuffix []string `json:"domain_suffix,omitempty"`
+	IPCIDR       []string `json:"ip_cidr,omitempty"`
+	Outbound     string   `json:"outbound"`
 }
 
 type ExperimentalConfig struct {
@@ -111,6 +123,13 @@ type ServerEP struct {
 type OutboundConfig struct {
 	Type string `json:"type"`
 	Tag  string `json:"tag"`
+	// Поля для type="wireguard" (sing-box userspace WG outbound)
+	Server        string   `json:"server,omitempty"`
+	ServerPort    int      `json:"server_port,omitempty"`
+	LocalAddress  []string `json:"local_address,omitempty"`
+	PrivateKey    string   `json:"private_key,omitempty"`
+	PeerPublicKey string   `json:"peer_public_key,omitempty"`
+	MTU           int      `json:"mtu,omitempty"`
 }
 
 // --- Logic ---
@@ -263,14 +282,83 @@ func GenerateAndReload() error {
 
 	file, _ := json.MarshalIndent(cfg, "", "  ")
 
-	err := os.WriteFile(ConfigPath, file, 0644)
-	if err != nil {
-		log.Println("Error writing config file:", err)
+	hetznerErr := os.WriteFile(ConfigPath, file, 0644)
+	if hetznerErr != nil {
+		log.Println("Error writing Hetzner config:", hetznerErr)
 		fmt.Println(string(file))
 	} else {
-		return ReloadService()
+		if rerr := ReloadService(); rerr != nil {
+			log.Println("Hetzner sing-box reload error:", rerr)
+		}
 	}
-	return nil
+
+	// Зеркало конфига на RuVDS (если WG включён)
+	if IsRuVDSEnabled() {
+		if rerr := GenerateAndReloadRuVDS(); rerr != nil {
+			log.Println("RuVDS sing-box reload error:", rerr)
+		}
+	}
+	return hetznerErr
+}
+
+// GenerateRuVDSConfig строит JSON-конфиг sing-box для RuVDS-фронта:
+// те же inbounds что и на Hetzner + WireGuard outbound на Hetzner.
+// Маршрутизация: всё по умолчанию через wg-out (egress = Hetzner public IP).
+func GenerateRuVDSConfig() ([]byte, error) {
+	wgCfg, err := GetWireGuardConfig()
+	if err != nil {
+		return nil, fmt.Errorf("WG config не найден: %w", err)
+	}
+	if !wgCfg.Enabled {
+		return nil, fmt.Errorf("WireGuard выключен")
+	}
+	if wgCfg.RuVDSPrivateKey == "" || wgCfg.HetznerPublicKey == "" {
+		return nil, fmt.Errorf("WG-ключи не сгенерированы — запустите SetupWireGuard сначала")
+	}
+
+	var users []database.User
+	database.DB.Where("status = ?", "active").Find(&users)
+
+	var inbounds []database.InboundConfig
+	database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
+
+	singboxInbounds := []SingboxInbound{}
+	for _, ib := range inbounds {
+		singboxInbounds = append(singboxInbounds, buildSingboxInbound(ib, users))
+	}
+
+	hetznerEndpoint := GetHetznerServerIP()
+	wgOutbound := BuildWireguardOutbound(wgCfg, hetznerEndpoint)
+
+	cfg := SingBoxConfig{
+		Log: LogConfig{
+			Level:     "info",
+			Timestamp: true,
+			Output:    "/etc/sing-box/access.log",
+		},
+		Inbounds: singboxInbounds,
+		Outbounds: []OutboundConfig{
+			wgOutbound,
+			{Type: "direct", Tag: "direct"},
+			{Type: "block", Tag: "block"},
+		},
+		Route: &RouteConfig{
+			Final: "wg-out",
+		},
+	}
+	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// GenerateAndReloadRuVDS — перегенерация + деплой config.json на RuVDS через SSH.
+func GenerateAndReloadRuVDS() error {
+	if !IsRuVDSEnabled() {
+		return nil
+	}
+	cfgJSON, err := GenerateRuVDSConfig()
+	if err != nil {
+		return err
+	}
+	return DeploySingboxConfigRuVDS(cfgJSON)
 }
 
 // GenerateLinkForInbound generates a subscription link for a given inbound config
