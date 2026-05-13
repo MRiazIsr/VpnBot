@@ -1,12 +1,16 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
 	"vpnbot/database"
+
+	"golang.org/x/crypto/curve25519"
 )
 
 const (
@@ -48,6 +52,13 @@ func SetupWireGuard() error {
 	if !cfg.Enabled {
 		log.Println("wireguard: отключён, пропускаем настройку")
 		return nil
+	}
+
+	// Гарантируем что wireguard-tools установлен ДО любых wg-операций.
+	// (Ключи генерим в чистом Go, но wg-quick всё равно нужен.)
+	if err := ensureWireGuardToolsInstalled(); err != nil {
+		updateWGStatus("error", err.Error())
+		return err
 	}
 
 	if cfg.HetznerPrivateKey == "" || cfg.HetznerPublicKey == "" {
@@ -106,22 +117,41 @@ func ensureWGConfigRow() (database.WireGuardConfig, error) {
 	return cfg, nil
 }
 
-// GenerateWGKeypair вызывает wg genkey + wg pubkey локально.
+// GenerateWGKeypair генерирует пару WireGuard-ключей через curve25519 в чистом Go
+// (не зависит от установленного бинаря wg). Формат — стандартный WG base64.
 func GenerateWGKeypair() (private string, public string, err error) {
-	privOut, err := exec.Command("wg", "genkey").Output()
-	if err != nil {
-		return "", "", fmt.Errorf("wg genkey: %w", err)
+	privBytes := make([]byte, 32)
+	if _, err := rand.Read(privBytes); err != nil {
+		return "", "", fmt.Errorf("crypto/rand: %w", err)
 	}
-	private = strings.TrimSpace(string(privOut))
+	// Clamp по curve25519/WG-спецификации
+	privBytes[0] &= 248
+	privBytes[31] &= 127
+	privBytes[31] |= 64
 
-	pubCmd := exec.Command("wg", "pubkey")
-	pubCmd.Stdin = strings.NewReader(private + "\n")
-	pubOut, err := pubCmd.Output()
+	pubBytes, err := curve25519.X25519(privBytes, curve25519.Basepoint)
 	if err != nil {
-		return "", "", fmt.Errorf("wg pubkey: %w", err)
+		return "", "", fmt.Errorf("curve25519: %w", err)
 	}
-	public = strings.TrimSpace(string(pubOut))
+
+	private = base64.StdEncoding.EncodeToString(privBytes)
+	public = base64.StdEncoding.EncodeToString(pubBytes)
 	return
+}
+
+// ensureWireGuardToolsInstalled — apt-get install wireguard-tools если бинаря wg нет.
+// Нужен для wg-quick@wg0 (генерация ключей теперь чисто Go).
+func ensureWireGuardToolsInstalled() error {
+	if exec.Command("sh", "-c", "command -v wg-quick >/dev/null 2>&1").Run() == nil {
+		return nil
+	}
+	log.Println("wireguard: устанавливаем wireguard-tools...")
+	out, err := exec.Command("sh", "-c",
+		"DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard wireguard-tools").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("apt-get install wireguard-tools: %w: %s", err, string(out))
+	}
+	return nil
 }
 
 // detectDefaultIface — имя сетевого интерфейса для MASQUERADE на Hetzner.
@@ -140,13 +170,8 @@ func detectDefaultIface() string {
 
 // EnsureHetznerWG настраивает wg-quick@wg0 на Hetzner локально. Идемпотентна.
 func EnsureHetznerWG(cfg database.WireGuardConfig) error {
-	if err := exec.Command("sh", "-c", "command -v wg >/dev/null 2>&1").Run(); err != nil {
-		log.Println("wireguard: устанавливаем wireguard-tools...")
-		install := exec.Command("sh", "-c",
-			"DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard wireguard-tools")
-		if out, err := install.CombinedOutput(); err != nil {
-			return fmt.Errorf("apt-get install wireguard: %w: %s", err, string(out))
-		}
+	if err := ensureWireGuardToolsInstalled(); err != nil {
+		return err
 	}
 
 	iface := detectDefaultIface()
