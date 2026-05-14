@@ -79,3 +79,40 @@ func GetTelemtRuVDSLogs() gin.HandlerFunc {
 		c.Data(200, "text/plain; charset=utf-8", []byte(out))
 	}
 }
+
+// GET /api/telemt/ruvds/diagnose — структурированный отчёт о состоянии telemt
+// для расследования жалоб клиентов на нестабильность (версия + конфиг +
+// счётчик handshake timeouts + проба egress до Telegram DC).
+func DiagnoseTelemtRuVDS() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !service.IsPortForwardConfigured() {
+			c.JSON(400, gin.H{"error": "RUVDS_IP не задан"})
+			return
+		}
+		d, err := service.GetTelemtRuVDSDiagnostics()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, d)
+	}
+}
+
+// POST /api/telemt/ruvds/upgrade — форс-апгрейд telemt до TelemtPinnedVersion.
+// Останавливает сервис, бэкапит бинарник, скачивает новый, запускает; при сбое — откат.
+func UpgradeTelemtRuVDS() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !service.IsPortForwardConfigured() {
+			c.JSON(400, gin.H{"error": "RUVDS_IP не задан"})
+			return
+		}
+		if err := service.UpgradeTelemtRuVDS(); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{
+			"message": "telemt обновлён на " + service.TelemtPinnedVersion,
+			"version": service.TelemtPinnedVersion,
+		})
+	}
+}

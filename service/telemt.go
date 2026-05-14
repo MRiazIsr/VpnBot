@@ -103,7 +103,7 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 	}
 	tlsDomain := cfg.TLSDomain
 	if tlsDomain == "" {
-		tlsDomain = "dl.google.com"
+		tlsDomain = "lk.rt.ru"
 	}
 
 	var sb strings.Builder

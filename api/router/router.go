@@ -110,6 +110,8 @@ func SetupRouter(r *gin.Engine) {
 			auth.POST("/telemt/ruvds/stop", handlers.StopTelemtRuVDS())
 			auth.GET("/telemt/ruvds/status", handlers.GetTelemtRuVDSStatus())
 			auth.GET("/telemt/ruvds/logs", handlers.GetTelemtRuVDSLogs())
+			auth.GET("/telemt/ruvds/diagnose", handlers.DiagnoseTelemtRuVDS())
+			auth.POST("/telemt/ruvds/upgrade", handlers.UpgradeTelemtRuVDS())
 		}
 	}
 

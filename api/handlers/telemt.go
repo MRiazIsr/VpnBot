@@ -12,10 +12,13 @@ func GetTelemetConfig() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var cfg database.TelemetConfig
 		if err := database.DB.First(&cfg).Error; err != nil {
-			// Конфига ещё нет — возвращаем дефолтный
+			// Конфига ещё нет — возвращаем дефолтный.
+			// lk.rt.ru: домен Ростелекома — RKN гарантированно не блокирует,
+			// при этом не входит в "канонические" фронты MTProxy типа dl.google.com,
+			// которые ТСПУ ассоциирует с прокси-инфраструктурой.
 			c.JSON(200, database.TelemetConfig{
 				Port:      9443,
-				TLSDomain: "dl.google.com",
+				TLSDomain: "lk.rt.ru",
 			})
 			return
 		}
