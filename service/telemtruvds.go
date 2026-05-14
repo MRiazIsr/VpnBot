@@ -14,7 +14,8 @@ import (
 // Пиним явно вместо releases/latest: issue telemt/telemt#628 показал, что
 // после обновления 3.3.22 → 3.3.35 пришлось откатываться. 3.4.11 (10 мая 2026)
 // — текущая стабильная с фиксами по TLS-fronting и quota persistence.
-const TelemtPinnedVersion = "v3.4.11"
+// Внимание: тег без префикса "v" — релизы лежат под "3.4.11", не "v3.4.11".
+const TelemtPinnedVersion = "3.4.11"
 
 // InstallTelemtRuVDS — скачивает и устанавливает telemt на RuVDS.
 // Идемпотентна.
