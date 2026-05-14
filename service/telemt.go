@@ -131,8 +131,20 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 	sb.WriteString("enabled = true\n")
 	sb.WriteString("\n")
 
+	// telemt 3.4.x требует хотя бы один listener-блок, иначе старт падает
+	// с "No listeners. Exiting." (формат конфига изменился относительно 3.3.x).
+	sb.WriteString("[[server.listeners]]\n")
+	sb.WriteString("ip = \"0.0.0.0\"\n")
+	sb.WriteString("\n")
+
 	sb.WriteString("[censorship]\n")
 	sb.WriteString(fmt.Sprintf("tls_domain = \"%s\"\n", tlsDomain))
+	// mask=true + tls_emulation: telemt подтягивает реальный сертификат tls_domain
+	// и эмулирует TLS-record sizes — обычный HTTPS-like профиль вместо палевного
+	// "ee + 16 байт + хвост-домен". Без этого DPI отличает прокси за пару пакетов.
+	sb.WriteString("mask = true\n")
+	sb.WriteString("tls_emulation = true\n")
+	sb.WriteString("tls_front_dir = \"tlsfront\"\n")
 	sb.WriteString("\n")
 
 	sb.WriteString("[access.users]\n")
