@@ -35,6 +35,7 @@ func UpdateTelemetConfig() gin.HandlerFunc {
 			TLSDomain     string `json:"tls_domain"`
 			ServerAddress string `json:"server_address"`
 			ProxyTag      string `json:"proxy_tag"`
+			RuVDSEnabled  bool   `json:"ruvds_enabled"`
 		}
 		if err := c.ShouldBindJSON(&input); err != nil {
 			c.JSON(400, gin.H{"error": "Invalid input"})
@@ -56,6 +57,7 @@ func UpdateTelemetConfig() gin.HandlerFunc {
 				TLSDomain:     input.TLSDomain,
 				ServerAddress: input.ServerAddress,
 				ProxyTag:      input.ProxyTag,
+				RuVDSEnabled:  input.RuVDSEnabled,
 			}
 			database.DB.Create(&cfg)
 		} else {
@@ -65,6 +67,7 @@ func UpdateTelemetConfig() gin.HandlerFunc {
 			cfg.TLSDomain = input.TLSDomain
 			cfg.ServerAddress = input.ServerAddress
 			cfg.ProxyTag = input.ProxyTag
+			cfg.RuVDSEnabled = input.RuVDSEnabled
 			database.DB.Save(&cfg)
 		}
 
