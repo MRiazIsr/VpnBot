@@ -38,12 +38,11 @@ func InstallTelemtRuVDS() error {
 	}
 	arch := strings.TrimSpace(archOut)
 
-	// Определяем libc
-	libc := "gnu"
-	lddOut, _ := runSSH(client, "ldd --version 2>&1 | head -1")
-	if strings.Contains(strings.ToLower(lddOut), "musl") {
-		libc = "musl"
-	}
+	// Всегда берём musl-сборку: она статически линкована и не зависит от системного
+	// glibc. На RuVDS типично старая Ubuntu/Debian с glibc 2.31, а gnu-сборки
+	// telemt 3.4.x требуют GLIBC_2.34 — на старых системах падают сразу при старте
+	// с "version `GLIBC_2.34' not found".
+	libc := "musl"
 
 	url := fmt.Sprintf(
 		"https://github.com/telemt/telemt/releases/latest/download/telemt-%s-linux-%s.tar.gz",
@@ -253,11 +252,8 @@ func UpgradeTelemtRuVDS() error {
 	}
 	arch := strings.TrimSpace(archOut)
 
-	libc := "gnu"
-	lddOut, _ := runSSH(client, "ldd --version 2>&1 | head -1")
-	if strings.Contains(strings.ToLower(lddOut), "musl") {
-		libc = "musl"
-	}
+	// см. InstallTelemtRuVDS — всегда musl ради переносимости поверх старых glibc.
+	libc := "musl"
 
 	url := fmt.Sprintf(
 		"https://github.com/telemt/telemt/releases/download/%s/telemt-%s-linux-%s.tar.gz",
