@@ -139,12 +139,11 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 
 	sb.WriteString("[censorship]\n")
 	sb.WriteString(fmt.Sprintf("tls_domain = \"%s\"\n", tlsDomain))
-	// mask=true + tls_emulation: telemt подтягивает реальный сертификат tls_domain
-	// и эмулирует TLS-record sizes — обычный HTTPS-like профиль вместо палевного
-	// "ee + 16 байт + хвост-домен". Без этого DPI отличает прокси за пару пакетов.
-	sb.WriteString("mask = true\n")
-	sb.WriteString("tls_emulation = true\n")
-	sb.WriteString("tls_front_dir = \"tlsfront\"\n")
+	// mask/tls_emulation/tls_front_dir НЕ включаем сразу: tls_emulation требует
+	// fetch'а реального сертификата с tls_domain, что на RuVDS через РКН-uplink
+	// может блокироваться/таймаутить — это вгоняло сервис в restart loop с
+	// "No listeners. Exiting" каждые ~3 минуты. Сначала добиваемся стабильности
+	// минимального конфига, эмуляцию включаем когда подтвердим выход в lk.rt.ru:443.
 	sb.WriteString("\n")
 
 	sb.WriteString("[access.users]\n")
