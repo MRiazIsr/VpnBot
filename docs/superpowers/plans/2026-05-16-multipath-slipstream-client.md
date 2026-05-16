@@ -38,6 +38,9 @@
 
 - T7 `HandshakeProber`/`SlipstreamProcess`: theoretical-only null-before-`onStart` race (child spawned, hard-timeout fires in the ~sub-µs gap before the live source is stored → unkilled). Not realistically reachable (slack ≥1500ms vs adjacent non-blocking statements). Optional defensive hardening: spawn+`onStart` in same try so it can't be skipped, or have the timeout path also briefly `future.get` to drain.
 
+- Upstream PRE-EXISTING failure (not introduced by us): `test/widget_test.dart` fails (`Couldn't find constructor 'MyApp'` — stale default Flutter scaffold test). T14 (full `flutter test`) must delete/fix this stale upstream test so the suite is green; it is NOT a regression from our work.
+- `pubspec.lock` is gitignored upstream — do not force-add it.
+
 ## File Structure (target, in the fork repo)
 
 New code under one focused package, one responsibility per file:
