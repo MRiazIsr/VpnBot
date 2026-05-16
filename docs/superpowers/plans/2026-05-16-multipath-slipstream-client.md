@@ -36,6 +36,8 @@
 - T4 `SlipstreamProcess.runUntil`: in-loop timeout only fires between emitted lines; T7 MUST add a hard outer watchdog/kill so the probe times out even if the process emits nothing (mitigated in practice — the client emits chatty startup lines immediately, per T2).
 - T6 `DnsWire.buildAQuery`: no label≤63/name≤255 guard (not triggered by current short whitelist/bogus names). T6 `parseFirstA`: reserved label-types 0x40/0x80 mis-advance (illegal on wire, bounds-safe→null); no response-txid match (acceptable — gate is a pre-filter; tunnel security comes from the QUIC/TLS handshake, not the gate).
 
+- T7 `HandshakeProber`/`SlipstreamProcess`: theoretical-only null-before-`onStart` race (child spawned, hard-timeout fires in the ~sub-µs gap before the live source is stored → unkilled). Not realistically reachable (slack ≥1500ms vs adjacent non-blocking statements). Optional defensive hardening: spawn+`onStart` in same try so it can't be skipped, or have the timeout path also briefly `future.get` to drain.
+
 ## File Structure (target, in the fork repo)
 
 New code under one focused package, one responsibility per file:
