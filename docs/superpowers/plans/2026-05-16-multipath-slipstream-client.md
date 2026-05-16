@@ -23,6 +23,14 @@
 
 ---
 
+## Execution adjustments from T3 recon (authoritative: fork `INTEGRATION-NOTES.md`)
+
+- **Android test infra is ABSENT** (`android/app/src/test`, `src/androidTest` do not exist; only Flutter `test/`). Task 4 must FIRST create the Kotlin unit-test source set + add deps (JUnit4, MockK, `kotlinx-coroutines-test`, Robolectric) to `android/app/build.gradle` and verify a trivial test runs, before its TDD steps.
+- **A MethodChannel already exists**: `xyz.dnstt.app/vpn` registered in `MainActivity.kt:~83` `configureFlutterEngine`. Task 9 ADDS a second channel `xyz.dnstt.app/multipath` alongside it (do NOT re-register or replace the existing one).
+- **Two slipstream spawn paths** exist: `DnsttVpnService.kt` (VPN mode, calls `SlipstreamBridge.startClient` ~L334-343) and `SlipstreamProxyService.kt` (proxy mode). Resolver is single-valued through every hop. Centralize multipath arg construction in `MultipathLauncher` (Task 8) and route BOTH spawn paths through it (Task 11 must update both, not just the VPN path).
+- Key anchors (from `INTEGRATION-NOTES.md`): arg builder `SlipstreamBridge.kt:59-96 startClient` (mutable `args`, single `--resolver` ~L87, extra args appended near `--gso` ~L92-94); DNS storage SharedPreferences keys `dns_servers`/`active_dns` in `lib/services/storage_service.dart`, model `lib/models/dns_server.dart`, selection `lib/providers/app_state.dart`; VpnService exclusion `DnsttVpnService.kt:426 addDisallowedApplication`, establish L429, teardown `disconnect()` L754-804; connect UI `lib/screens/home_screen.dart` + `lib/services/vpn_service.dart:490-532`; settings `lib/screens/config_management_screen.dart:884-937`, model `lib/models/dnstt_config.dart:45-49`; entrypoint `MainActivity.kt:73`. Dart package name: `dnstt_xyz_app`. `.so` packaged via `android/app/src/main/jniLibs/<abi>/libslipstream_client.so`.
+- Upstream build script checks a stale name `libslipstream.so` while runtime uses `libslipstream_client.so` — Task 14 must assert the `libslipstream_client.so` filename specifically.
+
 ## File Structure (target, in the fork repo)
 
 New code under one focused package, one responsibility per file:
