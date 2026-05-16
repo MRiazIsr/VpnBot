@@ -31,6 +31,11 @@
 - Key anchors (from `INTEGRATION-NOTES.md`): arg builder `SlipstreamBridge.kt:59-96 startClient` (mutable `args`, single `--resolver` ~L87, extra args appended near `--gso` ~L92-94); DNS storage SharedPreferences keys `dns_servers`/`active_dns` in `lib/services/storage_service.dart`, model `lib/models/dns_server.dart`, selection `lib/providers/app_state.dart`; VpnService exclusion `DnsttVpnService.kt:426 addDisallowedApplication`, establish L429, teardown `disconnect()` L754-804; connect UI `lib/screens/home_screen.dart` + `lib/services/vpn_service.dart:490-532`; settings `lib/screens/config_management_screen.dart:884-937`, model `lib/models/dnstt_config.dart:45-49`; entrypoint `MainActivity.kt:73`. Dart package name: `dnstt_xyz_app`. `.so` packaged via `android/app/src/main/jniLibs/<abi>/libslipstream_client.so`.
 - Upstream build script checks a stale name `libslipstream.so` while runtime uses `libslipstream_client.so` — Task 14 must assert the `libslipstream_client.so` filename specifically.
 
+## Hardening backlog (non-blocking, from reviews)
+
+- T4 `SlipstreamProcess.runUntil`: in-loop timeout only fires between emitted lines; T7 MUST add a hard outer watchdog/kill so the probe times out even if the process emits nothing (mitigated in practice — the client emits chatty startup lines immediately, per T2).
+- T6 `DnsWire.buildAQuery`: no label≤63/name≤255 guard (not triggered by current short whitelist/bogus names). T6 `parseFirstA`: reserved label-types 0x40/0x80 mis-advance (illegal on wire, bounds-safe→null); no response-txid match (acceptable — gate is a pre-filter; tunnel security comes from the QUIC/TLS handshake, not the gate).
+
 ## File Structure (target, in the fork repo)
 
 New code under one focused package, one responsibility per file:
