@@ -60,7 +60,7 @@ multipath используем нативный — slipstream-rust приним
 
 3. **`HandshakeProber` (Kotlin)** — по выжившим: короткий спавн встроенного
    slipstream-client (`--resolver <cand> --domain e.moskva.live -l
-   <ephemeral>`), успех = «Connection confirmed» в пределах timeout
+   <ephemeral>`), успех = «Connection ready» в пределах timeout
    (~8–12с), опц. один крошечный SOCKS-запрос → чистый kill по хэндлу.
    Записывает успех + handshake-RTT. Единственный честный критерий.
 
@@ -177,7 +177,7 @@ IP/трафик в подконтрольной сети). Fail-open не деф
   `HandshakeProber`+`MultipathLauncher` end-to-end, **сервер не мокается
   никогда** (урок: обычный DNS-тест даёт ложные результаты, единственная
   правда — реальный handshake). Харнесс: встроенный клиент → реальный сервер
-  через заведомо-рабочий резолвер → «Connection confirmed» + egress=Hetzner.
+  через заведомо-рабочий резолвер → «Connection ready» + egress=Hetzner.
 - **Полевая матрица** (удалённый тестер, через «Поделиться диагностикой»):
   открытый Wi-Fi (baseline), РФ-мобила+whitelist (главный таргет),
   Wi-Fi+whitelist, IPv6-only мобила, captive. Критерий: discovery ≥1,

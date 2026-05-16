@@ -19,6 +19,7 @@
 - Server: `e.moskva.live`, slipstream-rust slipstream-server on Hetzner `49.13.201.110`, target SOCKS5 `127.0.0.1:1080`. Server build commit must equal client submodule commit (protocol pre-1.0).
 - MIUI: `adb install` blocked (`INSTALL_FAILED_USER_RESTRICTED`) → install by tapping pushed APK.
 - A known-good test resolver for handshake baselines: Yandex `77.88.8.8`.
+- **EMPIRICALLY VERIFIED (Task 2, 2026-05-16) — do not change without re-verifying:** the bundled `libslipstream_client.so` is an ELF aarch64 PIE executable (runs as a CLI despite the `.so` name). At the pinned commit `b103aa66`, the handshake-success log signal is the line **`Connection ready`** (followed by an `acceptor: initial_max_streams_bidir_remote=...` line). It is NOT the literal `Connection confirmed` (that was the old EndPositive C binary's wording). All success predicates in this plan use `Connection ready` accordingly. Task 2 confirmed this exact rebuilt binary tunnels end-to-end through the live server (egress `49.13.201.110`).
 
 ---
 
@@ -170,12 +171,12 @@ import org.junit.Test
 
 class SlipstreamProcessTest {
     @Test fun emits_lines_until_predicate_then_stops() = runTest {
-        val fake = FakeLineSource(listOf("Starting", "Connection confirmed.", "more"))
+        val fake = FakeLineSource(listOf("Starting", "Connection ready.", "more"))
         val runner = SlipstreamProcess(libPath = "/x/libslipstream_client.so") { _ -> fake }
         val ok = runner.runUntil(
             args = listOf("--domain", "e.moskva.live"),
             timeoutMs = 1000,
-            predicate = { it.contains("Connection confirmed") }
+            predicate = { it.contains("Connection ready") }
         )
         assertTrue(ok.matched)
         assertTrue(fake.killed)
@@ -453,7 +454,7 @@ import org.junit.Test
 
 class HandshakeProberTest {
     @Test fun success_on_confirmed_with_rtt() = runTest {
-        val proc = SlipstreamProcess("lib.so") { FakeLineSource(listOf("Starting","Connection confirmed.")) }
+        val proc = SlipstreamProcess("lib.so") { FakeLineSource(listOf("Starting","Connection ready.")) }
         val r = HandshakeProber(proc, libPath="lib.so", domain="e.moskva.live")
                   .probe(Candidate("77.88.8.8",53,Source.SYSTEM), ephemeralPort=39001, timeoutMs=2000)
         assertTrue(r.working); assertTrue(r.rttMs >= 0)
@@ -491,7 +492,7 @@ class HandshakeProber(
 ) {
     fun probe(c: Candidate, ephemeralPort: Int, timeoutMs: Long): ProbeResult {
         val o = proc.runUntil(args(domain, c, ephemeralPort), timeoutMs) {
-            it.contains("Connection confirmed")
+            it.contains("Connection ready")
         }
         return ProbeResult(c, o.matched, o.elapsedMs)
     }
@@ -516,7 +517,7 @@ Expected: PASS (3 tests).
 Create `androidTest` (instrumented) `HandshakeProberRealTest` that runs the actual bundled lib against `e.moskva.live` via `77.88.8.8`, asserts `working == true` within 15s. This requires a device/emulator with network.
 
 Run: `./gradlew :app:connectedDebugAndroidTest --tests "*HandshakeProberRealTest*"`
-Expected: PASS (real "Connection confirmed"). If FAIL while Task 2 baseline passed → the spawn-probe is unreliable → escalate to fallback C: add a minimal `--probe` flag upstream-style to `vendor/slipstream-rust` (handshake then exit non-zero/zero), rebuild lib, switch `HandshakeProber` to use it. Document the escalation decision in `INTEGRATION-NOTES.md`.
+Expected: PASS (real "Connection ready"). If FAIL while Task 2 baseline passed → the spawn-probe is unreliable → escalate to fallback C: add a minimal `--probe` flag upstream-style to `vendor/slipstream-rust` (handshake then exit non-zero/zero), rebuild lib, switch `HandshakeProber` to use it. Document the escalation decision in `INTEGRATION-NOTES.md`.
 
 - [ ] **Step 6: Commit**
 
@@ -886,9 +887,9 @@ class DiagnosticsTest {
         val b = Diagnostics.build(
             netType="cellular", ipVersion="IPv6",
             results=listOf(mapOf("ip" to "77.88.8.8","passed" to true,"working" to true,"rttMs" to 120L)),
-            clientLogTail=listOf("Connection confirmed."))
+            clientLogTail=listOf("Connection ready."))
         assertTrue(b.contains("net=cellular")); assertTrue(b.contains("IPv6"))
-        assertTrue(b.contains("77.88.8.8")); assertTrue(b.contains("Connection confirmed."))
+        assertTrue(b.contains("77.88.8.8")); assertTrue(b.contains("Connection ready."))
     }
 }
 ```
