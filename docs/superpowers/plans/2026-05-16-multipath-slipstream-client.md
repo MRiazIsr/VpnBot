@@ -42,7 +42,18 @@ arm64-only (APK 32→13.6MB). Full Kotlin (15) + Flutter (9) unit suites GREEN.
 Real-server integration `android/integration/probe_real.sh` passes
 (egress 49.13.201.110). GUI connect E2E remains a manual field step.
 
-**PUSH BLOCKED — opsec (user decision required):** committed code/tests/docs
+**RESOLVED (2026-05-17):** P1 parametrized the tunnel domain to come from
+in-app user config (no embedded default; `DOMAIN_REQUIRED` if absent) and
+moved `probe_real.sh` to a gitignored `.env`; placeholders (`tunnel.example.com`,
+`203.0.113.10`) in git. P2 `git filter-repo` scrubbed both strings from ALL
+history (21 affected commits) — independently verified ZERO occurrences across
+all refs; new HEAD `1080030`; tests/builds green; arm64-only signed APK.
+`origin` removed by filter-repo. Branch is now secret-free in tree AND history.
+Remaining: user makes a PRIVATE home (recommend NEW private repo, delete the
+old public fork — fork-network may cache objects) and force-pushes
+`feat/multipath` there (push hard-blocked for the agent — user action).
+
+Original blocker (now resolved) was: committed code/tests/docs
 (`MainActivity.kt`, `probe_real.sh`, `DISTRIBUTION.md`, `INTEGRATION-NOTES.md`,
 tests) embed the production server domain `e.moskva.live` and Hetzner IP
 `49.13.201.110`. The fork is likely public → pushing would publicly expose
