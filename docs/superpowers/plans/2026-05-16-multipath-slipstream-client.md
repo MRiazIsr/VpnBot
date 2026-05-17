@@ -63,6 +63,20 @@ domain/IP (remove hardcoding, scrub history) + push to a PRIVATE fork, or
 (b) keep local-only. Non-blocking review notes recorded in fork
 `INTEGRATION-NOTES.md` "Final review notes".
 
+## LIVE ON-DEVICE SUCCESS (2026-05-17, Redmi)
+
+Fixed APK (commit `b0dd48c`) on the phone, in-app diagnostics show full
+working state: discovery found 2 resolvers both `working=true` (real
+handshake); client `Listening on TCP port 1080` (Fix A — no EADDRINUSE);
+`Connection ready` + `acceptor:`; **`Added path [::ffff:8.8.8.8]:53`**
+→ QUIC **multipath actually engaged on real RU device**. Bugs A
+(EADDRINUSE :1080) & B (leaked probe children) verified fixed in the field.
+Pending only the user's egress=Germany visual confirm.
+
+Note: rust client logs `GSO is not implemented in the Rust client loop yet`
+— the `--gso` flag is accepted but a no-op at the pinned commit; expect NO
+GSO speedup (perf-tuning item, not a bug).
+
 ## Hardening backlog (non-blocking, from reviews)
 
 - T4 `SlipstreamProcess.runUntil`: in-loop timeout only fires between emitted lines; T7 MUST add a hard outer watchdog/kill so the probe times out even if the process emits nothing (mitigated in practice — the client emits chatty startup lines immediately, per T2).
