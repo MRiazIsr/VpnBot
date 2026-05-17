@@ -63,7 +63,20 @@ domain/IP (remove hardcoding, scrub history) + push to a PRIVATE fork, or
 (b) keep local-only. Non-blocking review notes recorded in fork
 `INTEGRATION-NOTES.md` "Final review notes".
 
-## LIVE ON-DEVICE SUCCESS (2026-05-17, Redmi)
+## PAUSED — system-VPN bring-up still broken (2026-05-17)
+
+Despite fixes `b0dd48c` (lifecycle/freePort) and `b17ecd9` (multipath port
+7000→1080 + legacy-parity + isAlive=tun∧client), on-device the Slipstream-
+multipath Connect STILL does not establish a system VPN: `dumpsys` VPN
+agents=0, no tun0, no DnsttVpnService ServiceRecord, slipstream proc alive
+but NOT bound to :1080. Transport itself proven working (discovery+multipath+
+`probe_real.sh` all green). User paused the fix; will resume.
+**Resume handoff: fork repo `~/src/dnstt_xyz_app/RESUME-DEBUG.md`** (commit
+`d8f0461`, branch feat/multipath, local-only) — ranked hypotheses (top:
+multipath client not holding :1080 → fail-closed tears tun down), full
+diagnostic battery, key file anchors, build/deploy/verify commands.
+
+## LIVE ON-DEVICE SUCCESS (2026-05-17, Redmi) [SUPERSEDED — see PAUSED above; the "good" diagnostics were intermittent]
 
 Fixed APK (commit `b0dd48c`) on the phone, in-app diagnostics show full
 working state: discovery found 2 resolvers both `working=true` (real
