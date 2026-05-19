@@ -19,6 +19,25 @@ var (
 	incidentSet = map[string]string{} // service -> label
 )
 
+// lastIncidentList holds the incident list captured just before the set is
+// cleared on recovery, so the broadcast button can reference it later.
+var (
+	lastIncidentMu   sync.Mutex
+	lastIncidentList = "сервисы подключения"
+)
+
+func setLastIncidentList(s string) {
+	lastIncidentMu.Lock()
+	lastIncidentList = s
+	lastIncidentMu.Unlock()
+}
+
+func getLastIncidentList() string {
+	lastIncidentMu.Lock()
+	defer lastIncidentMu.Unlock()
+	return lastIncidentList
+}
+
 func runHealthAlarm(b *tele.Bot) {
 	for {
 		var hc database.HealthConfig
@@ -83,6 +102,7 @@ func notifyAdmin(b *tele.Bot, tr health.Transition) {
 		_, _ = b.Send(&tele.User{ID: AdminID}, msg, tele.ModeMarkdown)
 	case health.StatusOK:
 		list := incidentList()
+		setLastIncidentList(list)
 		clearIncidentIfAllOK()
 		rm := &tele.ReplyMarkup{}
 		btn := rm.Data("📢 Оповестить всех", "health_bcast")
@@ -167,7 +187,7 @@ func registerHealthHandlers(b *tele.Bot) {
 func broadcastRecovery(b *tele.Bot) {
 	text := fmt.Sprintf(
 		"✅ Связь восстановлена. Были перебои с подключением %s — сейчас всё работает.",
-		incidentList())
+		getLastIncidentList())
 
 	var users []database.User
 	database.DB.Where("status = ? AND telegram_id <> 0", "active").Find(&users)
