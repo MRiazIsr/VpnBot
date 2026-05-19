@@ -128,3 +128,61 @@ func clearIncidentIfAllOK() {
 		incidentMu.Unlock()
 	}
 }
+
+// registerHealthHandlers wires the recovery broadcast button + its confirm.
+// Called from bot.Start(). Only the admin may use them.
+func registerHealthHandlers(b *tele.Bot) {
+	b.Handle(&tele.Btn{Unique: "health_bcast"}, func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return c.Respond()
+		}
+		var n int64
+		database.DB.Model(&database.User{}).
+			Where("status = ? AND telegram_id <> 0", "active").Count(&n)
+		rm := &tele.ReplyMarkup{}
+		yes := rm.Data(fmt.Sprintf("✅ Разослать %d юзерам", n), "health_bcast_yes")
+		no := rm.Data("Отмена", "health_bcast_no")
+		rm.Inline(rm.Row(yes), rm.Row(no))
+		return c.Edit("Разослать уведомление о восстановлении?", rm)
+	})
+
+	b.Handle(&tele.Btn{Unique: "health_bcast_no"}, func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return c.Respond()
+		}
+		return c.Edit("Рассылка отменена.")
+	})
+
+	b.Handle(&tele.Btn{Unique: "health_bcast_yes"}, func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return c.Respond()
+		}
+		// anti double-click: disable buttons immediately
+		_ = c.Edit("📢 Рассылаю…")
+		go broadcastRecovery(b)
+		return c.Respond()
+	})
+}
+
+func broadcastRecovery(b *tele.Bot) {
+	text := fmt.Sprintf(
+		"✅ Связь восстановлена. Были перебои с подключением %s — сейчас всё работает.",
+		incidentList())
+
+	var users []database.User
+	database.DB.Where("status = ? AND telegram_id <> 0", "active").Find(&users)
+
+	sent, failed := 0, 0
+	for _, u := range users {
+		if _, err := b.Send(&tele.User{ID: u.TelegramID}, text); err != nil {
+			failed++
+		} else {
+			sent++
+		}
+		time.Sleep(50 * time.Millisecond) // ~20 msg/s, under Telegram limits
+	}
+	if AdminID != 0 {
+		_, _ = b.Send(&tele.User{ID: AdminID},
+			fmt.Sprintf("📊 Рассылка готова: отправлено %d, ошибок %d.", sent, failed))
+	}
+}
