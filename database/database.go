@@ -84,6 +84,18 @@ type TelemetConfig struct {
 	RuVDSEnabled  bool   `gorm:"default:false" json:"ruvds_enabled"` // Запустить telemt на RuVDS через SSH
 }
 
+// HealthConfig — настройки HEALTH ALARM (синглтон, как TelemetConfig).
+type HealthConfig struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Enabled        bool `gorm:"default:true" json:"enabled"`
+	IntervalSec    int  `gorm:"default:60" json:"interval_sec"`
+	DownHysteresis int  `gorm:"default:2" json:"down_hysteresis"`
+}
+
 // WireGuardConfig — настройки WG-туннеля RuVDS → Hetzner (синглтон).
 // На Hetzner крутится kernel WG (wg-quick@wg0), на RuVDS — userspace WG
 // внутри sing-box (тип outbound "wireguard"), kernel WG на RuVDS не нужен.
@@ -184,7 +196,7 @@ func Init(path string) {
 	}
 
 	// Миграция схемы
-	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{}, &TurnConfig{}, &WireGuardConfig{})
+	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{}, &TurnConfig{}, &WireGuardConfig{}, &HealthConfig{})
 	if err != nil {
 		log.Fatal("Migration failed:", err)
 	}
@@ -290,6 +302,11 @@ func Init(path string) {
 		for _, ib := range builtins {
 			DB.Create(&ib)
 		}
+	}
+
+	var hc HealthConfig
+	if DB.First(&hc).Error != nil {
+		DB.Create(&HealthConfig{Enabled: true, IntervalSec: 60, DownHysteresis: 2})
 	}
 }
 
