@@ -59,3 +59,58 @@ type Transition struct {
 type Config struct {
 	DownHysteresis int // consecutive bad cycles required to confirm DOWN
 }
+
+// Evaluate computes the new snapshot and the transitions to notify.
+// Rules: a "bad" signal increments FailStreak; first bad (or any Partial)
+// is immediate DEGRADATION; DOWN only after FailStreak >= DownHysteresis.
+// Good signal resets to OK. A Transition is emitted only when Status
+// actually changes (dedup). Recovery (->OK) is always emitted.
+func Evaluate(prev Snapshot, signals []SignalResult, cfg Config, now time.Time) (Snapshot, []Transition) {
+	if cfg.DownHysteresis < 1 {
+		cfg.DownHysteresis = 1
+	}
+	cur := make(Snapshot, len(signals))
+	var transitions []Transition
+
+	for _, sg := range signals {
+		old, seen := prev[sg.Service]
+		if !seen {
+			old = ServiceState{Status: StatusOK}
+		}
+
+		st := ServiceState{Since: old.Since, Reason: sg.Reason}
+
+		switch {
+		case !sg.Bad && !sg.Partial:
+			st.Status = StatusOK
+			st.FailStreak = 0
+			if old.Status == StatusOK {
+				st.Reason = ""
+			}
+		default:
+			st.FailStreak = old.FailStreak + 1
+			if sg.Bad && st.FailStreak >= cfg.DownHysteresis {
+				st.Status = StatusDown
+			} else {
+				st.Status = StatusDegradation
+			}
+		}
+
+		if st.Status != old.Status {
+			st.Since = now
+			transitions = append(transitions, Transition{
+				Service: sg.Service,
+				Label:   sg.Label,
+				From:    old.Status,
+				To:      st.Status,
+				Reason:  sg.Reason,
+				Since:   st.Since,
+			})
+		} else if st.Since.IsZero() {
+			st.Since = now
+		}
+
+		cur[sg.Service] = st
+	}
+	return cur, transitions
+}
