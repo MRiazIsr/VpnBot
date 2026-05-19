@@ -5,8 +5,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -63,12 +61,11 @@ func GetForwardRules() ([]ForwardRule, error) {
 	}
 	defer client.Close()
 
-	output, err := runSSH(client, "iptables-save -t nat")
+	output, err := runSSH(client, "nft list table ip relay")
 	if err != nil {
-		return nil, fmt.Errorf("ошибка выполнения iptables-save: %w", err)
+		return nil, fmt.Errorf("ошибка nft list table ip relay (миграция на nftables не выполнена?): %w", err)
 	}
-
-	return parseIptablesRules(output, GetHetznerServerIP()), nil
+	return parseNftForwards(output, GetHetznerServerIP()), nil
 }
 
 func AddForward(port int, protocol string) error {
@@ -78,29 +75,18 @@ func AddForward(port int, protocol string) error {
 	}
 	defer client.Close()
 
-	hetznerIP := GetHetznerServerIP()
-	portStr := strconv.Itoa(port)
-
-	// DNAT в PREROUTING
-	cmd := fmt.Sprintf("iptables -t nat -C PREROUTING -p %s --dport %s -j DNAT --to-destination %s:%s 2>/dev/null || iptables -t nat -A PREROUTING -p %s --dport %s -j DNAT --to-destination %s:%s",
-		protocol, portStr, hetznerIP, portStr,
-		protocol, portStr, hetznerIP, portStr)
-
-	if _, err := runSSH(client, cmd); err != nil {
-		return fmt.Errorf("ошибка добавления DNAT правила: %w", err)
+	conf, err := runSSH(client, "cat "+nftConfPath)
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать %s: %w", nftConfPath, err)
 	}
-
-	// MASQUERADE в POSTROUTING
-	cmd = fmt.Sprintf("iptables -t nat -C POSTROUTING -d %s -p %s --dport %s -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -d %s -p %s --dport %s -j MASQUERADE",
-		hetznerIP, protocol, portStr,
-		hetznerIP, protocol, portStr)
-
-	if _, err := runSSH(client, cmd); err != nil {
-		return fmt.Errorf("ошибка добавления MASQUERADE правила: %w", err)
+	newConf, err := insertForward(conf, port, protocol, GetHetznerServerIP())
+	if err != nil {
+		return err
 	}
-
-	persistIptables(client)
-	return nil
+	if newConf == conf {
+		return nil
+	}
+	return applyNftConf(client, newConf)
 }
 
 func RemoveForward(port int, protocol string) error {
@@ -110,66 +96,46 @@ func RemoveForward(port int, protocol string) error {
 	}
 	defer client.Close()
 
-	hetznerIP := GetHetznerServerIP()
-	portStr := strconv.Itoa(port)
-
-	// Удаляем DNAT
-	cmd := fmt.Sprintf("iptables -t nat -D PREROUTING -p %s --dport %s -j DNAT --to-destination %s:%s 2>/dev/null; true",
-		protocol, portStr, hetznerIP, portStr)
-	runSSH(client, cmd)
-
-	// Удаляем MASQUERADE
-	cmd = fmt.Sprintf("iptables -t nat -D POSTROUTING -d %s -p %s --dport %s -j MASQUERADE 2>/dev/null; true",
-		hetznerIP, protocol, portStr)
-	runSSH(client, cmd)
-
-	persistIptables(client)
-	return nil
+	conf, err := runSSH(client, "cat "+nftConfPath)
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать %s: %w", nftConfPath, err)
+	}
+	newConf, err := removeForward(conf, port, protocol)
+	if err != nil {
+		return err
+	}
+	if newConf == conf {
+		return nil
+	}
+	return applyNftConf(client, newConf)
 }
 
 // --- Internal ---
-
-var dnatRegex = regexp.MustCompile(`-A PREROUTING.*-p (\w+).*--dport (\d+) -j DNAT --to-destination ([\d.]+:\d+)`)
-
-func parseIptablesRules(output string, hetznerIP string) []ForwardRule {
-	rules := []ForwardRule{}
-	seen := make(map[string]bool)
-
-	for _, line := range strings.Split(output, "\n") {
-		matches := dnatRegex.FindStringSubmatch(line)
-		if len(matches) < 4 {
-			continue
-		}
-
-		proto := matches[1]
-		port, _ := strconv.Atoi(matches[2])
-		dest := matches[3]
-
-		// Фильтруем только правила с нашим Hetzner IP
-		if !strings.HasPrefix(dest, hetznerIP+":") {
-			continue
-		}
-
-		key := fmt.Sprintf("%d/%s", port, proto)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-
-		rules = append(rules, ForwardRule{
-			Port:        port,
-			Protocol:    proto,
-			Destination: dest,
-		})
-	}
-
-	return rules
-}
 
 func persistIptables(client *ssh.Client) {
 	// Пробуем несколько способов сохранить правила
 	runSSH(client, "iptables-save > /etc/iptables/rules.v4 2>/dev/null; true")
 	runSSH(client, "netfilter-persistent save 2>/dev/null; true")
+}
+
+// applyNftConf writes conf to a temp file, validates it with `nft -c -f`
+// (rejects on syntax/semantic error WITHOUT touching the live ruleset),
+// atomically replaces /etc/nftables.conf, then reloads with `nft -f`.
+// On validation failure the live config and ruleset are unchanged.
+func applyNftConf(client *ssh.Client, conf string) error {
+	tmp := nftConfPath + ".vpnbot.tmp"
+	heredoc := fmt.Sprintf("cat > %s <<'VPNBOT_NFT_EOF'\n%s\nVPNBOT_NFT_EOF", tmp, conf)
+	if _, err := runSSH(client, heredoc); err != nil {
+		return fmt.Errorf("не удалось записать временный конфиг: %w", err)
+	}
+	if out, err := runSSH(client, "nft -c -f "+tmp); err != nil {
+		runSSH(client, "rm -f "+tmp)
+		return fmt.Errorf("nft валидация не прошла, конфиг НЕ изменён: %v (%s)", err, strings.TrimSpace(out))
+	}
+	if _, err := runSSH(client, fmt.Sprintf("mv %s %s && nft -f %s", tmp, nftConfPath, nftConfPath)); err != nil {
+		return fmt.Errorf("не удалось применить nft конфиг: %w", err)
+	}
+	return nil
 }
 
 func sshConnect() (*ssh.Client, error) {
