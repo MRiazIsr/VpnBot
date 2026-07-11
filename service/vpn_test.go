@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"vpnbot/database"
 )
 
 func TestRouteRule_InboundOmitEmpty(t *testing.T) {
@@ -92,5 +93,64 @@ func TestSingBoxConfig_OutboundsMixedTypes(t *testing.T) {
 	}
 	if !strings.Contains(got, `"tag":"direct"`) {
 		t.Fatalf("expected direct, got %s", got)
+	}
+}
+
+func TestBuildSingBoxConfig_NoExtraOutbound(t *testing.T) {
+	cfg := buildSingBoxConfig(nil, nil, nil, "")
+	if len(cfg.Outbounds) != 2 {
+		t.Fatalf("expected 2 outbounds (direct, block), got %d", len(cfg.Outbounds))
+	}
+	if cfg.Route.Final != "direct" {
+		t.Fatalf("expected route.final=direct, got %q", cfg.Route.Final)
+	}
+}
+
+func TestBuildSingBoxConfig_WithExtraOutbound(t *testing.T) {
+	extra := map[string]any{"type": "wireguard", "tag": "wg-out"}
+	cfg := buildSingBoxConfig(nil, nil, extra, "wg-out")
+	if len(cfg.Outbounds) != 3 {
+		t.Fatalf("expected 3 outbounds, got %d", len(cfg.Outbounds))
+	}
+	first, ok := cfg.Outbounds[0].(map[string]any)
+	if !ok || first["tag"] != "wg-out" {
+		t.Fatalf("expected first outbound wg-out, got %+v", cfg.Outbounds[0])
+	}
+	if cfg.Route.Final != "wg-out" {
+		t.Fatalf("expected route.final=wg-out, got %q", cfg.Route.Final)
+	}
+}
+
+func TestBuildSingBoxConfig_PerInboundRule(t *testing.T) {
+	ib := database.InboundConfig{
+		Tag:               "vless-direct-xhttp",
+		Protocol:          "vless",
+		ListenPort:        2059,
+		TLSType:           "reality",
+		Transport:         "xhttp",
+		SNI:               "yastatic.net",
+		UserType:          "new",
+		Enabled:           true,
+		ExitOutbound:      "direct",
+		RealityPrivateKey: "x", RealityPublicKey: "y",
+		RealityShortIDs:   database.JSONStringArray{"abcd"},
+	}
+	cfg := buildSingBoxConfig([]database.InboundConfig{ib}, nil, nil, "")
+	if len(cfg.Route.Rules) < 2 {
+		t.Fatalf("expected >=2 rules, got %d", len(cfg.Route.Rules))
+	}
+	first := cfg.Route.Rules[0]
+	if len(first.Inbound) != 1 || first.Inbound[0] != "vless-direct-xhttp" || first.Outbound != "direct" {
+		t.Fatalf("expected first rule to route direct-xhttp→direct, got %+v", first)
+	}
+	found := false
+	for _, r := range cfg.Route.Rules {
+		if len(r.IPCIDR) > 0 && r.Outbound == "block" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("bogon block rule missing")
 	}
 }

@@ -253,22 +253,49 @@ func loadExtraOutbound() (map[string]any, error) {
 	return out, nil
 }
 
-func GenerateAndReload() error {
-	var users []database.User
-	database.DB.Where("status = ?", "active").Find(&users)
-
-	// Load enabled inbound configs from DB
-	var inbounds []database.InboundConfig
-	database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
-
+// buildSingBoxConfig строит sing-box конфиг из inbound'ов + пользователей.
+// extraOutbound (nil ok) инжектится в начало outbounds.
+// finalTag (пусто ok) — тег route.final; если пусто, используется "direct".
+func buildSingBoxConfig(inbounds []database.InboundConfig, users []database.User, extraOutbound map[string]any, finalTag string) SingBoxConfig {
 	singboxInbounds := []SingboxInbound{}
 	inboundTags := []string{}
+	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
 		singboxInbounds = append(singboxInbounds, buildSingboxInbound(ib, users))
 		inboundTags = append(inboundTags, ib.Tag)
+		if ib.ExitOutbound != "" {
+			perInboundRules = append(perInboundRules, RouteRule{
+				Inbound:  []string{ib.Tag},
+				Outbound: ib.ExitOutbound,
+			})
+		}
 	}
 
-	cfg := SingBoxConfig{
+	outbounds := []any{}
+	if extraOutbound != nil {
+		outbounds = append(outbounds, extraOutbound)
+	}
+	outbounds = append(outbounds,
+		OutboundConfig{Type: "direct", Tag: "direct"},
+		OutboundConfig{Type: "block", Tag: "block"},
+	)
+
+	if finalTag == "" {
+		finalTag = "direct"
+	}
+
+	bogonRule := RouteRule{
+		IPCIDR: []string{
+			"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+			"169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+			"0.0.0.0/8", "100.64.0.0/10",
+			"fc00::/7", "fe80::/10", "ff00::/8", "::/128",
+		},
+		Outbound: "block",
+	}
+	rules := append(perInboundRules, bogonRule)
+
+	return SingBoxConfig{
 		Log: LogConfig{
 			Level:     "info",
 			Timestamp: true,
@@ -284,45 +311,37 @@ func GenerateAndReload() error {
 				},
 			},
 		},
-		Inbounds: singboxInbounds,
-		Outbounds: []any{
-			OutboundConfig{Type: "direct", Tag: "direct"},
-			OutboundConfig{Type: "block", Tag: "block"},
-		},
+		Inbounds:  singboxInbounds,
+		Outbounds: outbounds,
 		Route: &RouteConfig{
-			Rules: []RouteRule{
-				{
-					IPCIDR: []string{
-						"10.0.0.0/8",
-						"172.16.0.0/12",
-						"192.168.0.0/16",
-						"169.254.0.0/16",
-						"224.0.0.0/4",
-						"240.0.0.0/4",
-						"0.0.0.0/8",
-						"100.64.0.0/10",
-						"fc00::/7",
-						"fe80::/10",
-						"ff00::/8",
-						"::/128",
-					},
-					Outbound: "block",
-				},
-			},
-			Final: "direct",
+			Rules: rules,
+			Final: finalTag,
 		},
 	}
+}
+
+func GenerateAndReload() error {
+	var users []database.User
+	database.DB.Where("status = ?", "active").Find(&users)
+
+	var inbounds []database.InboundConfig
+	database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
+
+	extraOutbound, err := loadExtraOutbound()
+	if err != nil {
+		log.Println("Warning: extra outbound not loaded:", err)
+	}
+	finalTag := os.Getenv("ROUTE_FINAL")
+
+	cfg := buildSingBoxConfig(inbounds, users, extraOutbound, finalTag)
 
 	file, _ := json.MarshalIndent(cfg, "", "  ")
-
-	err := os.WriteFile(ConfigPath, file, 0644)
-	if err != nil {
+	if err := os.WriteFile(ConfigPath, file, 0644); err != nil {
 		log.Println("Error writing config file:", err)
 		fmt.Println(string(file))
-	} else {
-		return ReloadService()
+		return nil
 	}
-	return nil
+	return ReloadService()
 }
 
 // GenerateLinkForInbound generates a subscription link for a given inbound config

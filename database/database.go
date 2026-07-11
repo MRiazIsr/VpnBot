@@ -135,9 +135,10 @@ type InboundConfig struct {
 	UserType    string `json:"user_type"` // "legacy" | "new" | "hy2"
 	Flow        string `json:"flow"`      // "xtls-rprx-vision" | ""
 	Multiplex   bool   `json:"multiplex"`
-	Enabled     bool   `gorm:"default:true" json:"enabled"`
-	IsBuiltin   bool   `gorm:"default:false" json:"is_builtin"`
-	SortOrder   int    `gorm:"default:0" json:"sort_order"`
+	Enabled      bool   `gorm:"default:true" json:"enabled"`
+	IsBuiltin    bool   `gorm:"default:false" json:"is_builtin"`
+	SortOrder    int    `gorm:"default:0" json:"sort_order"`
+	ExitOutbound string `json:"exit_outbound"` // "" (=route.final) | "direct" | "wg-out"
 
 	ServerAddress string `json:"server_address"` // Адрес для ссылок (домен или IP). Пусто = SERVER_IP
 
