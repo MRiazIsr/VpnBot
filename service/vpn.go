@@ -40,6 +40,7 @@ type RouteConfig struct {
 }
 
 type RouteRule struct {
+	Inbound  []string `json:"inbound,omitempty"`
 	IPCIDR   []string `json:"ip_cidr,omitempty"`
 	Outbound string   `json:"outbound"`
 }
