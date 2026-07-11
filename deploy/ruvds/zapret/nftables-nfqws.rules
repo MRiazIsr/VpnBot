@@ -1,10 +1,11 @@
-# Маркирует TCP-egress через eth0 (публичный интерфейс RuVDS) в NFQUEUE 100.
-# Не трогает wg0 (wg-туннель к Hetzner изолирован).
+# Маркирует TCP-egress через eth0 с fwmark=100 (только sing-box direct outbound
+# от direct-exit inbounds — им проставлен routing_mark=100).
+# Не трогает: wg0, wg-туннель к Hetzner, собственный трафик системы (curl, apt).
 # После NFQUEUE nfqws применяет dpi-desync к пакетам.
 
 table inet zapret {
     chain output {
         type filter hook output priority mangle; policy accept;
-        oifname "eth0" tcp dport { 80, 443, 8080, 8443 } queue num 100 bypass
+        oifname "eth0" tcp dport { 80, 443, 8080, 8443 } meta mark 100 queue num 100 bypass
     }
 }
