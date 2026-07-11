@@ -235,6 +235,24 @@ func buildSingboxInbound(ib database.InboundConfig, users []database.User) Singb
 	return sb
 }
 
+// loadExtraOutbound читает JSON-файл, указанный в EXTRA_OUTBOUND_JSON_PATH.
+// Возвращает (nil, nil) если env не задан. Возвращает ошибку если файл указан, но нечитаем.
+func loadExtraOutbound() (map[string]any, error) {
+	path := os.Getenv("EXTRA_OUTBOUND_JSON_PATH")
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read extra outbound: %w", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("parse extra outbound: %w", err)
+	}
+	return out, nil
+}
+
 func GenerateAndReload() error {
 	var users []database.User
 	database.DB.Where("status = ?", "active").Find(&users)
