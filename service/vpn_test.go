@@ -242,3 +242,64 @@ func TestBuildSingboxInbound_MuxPadding(t *testing.T) {
 		t.Fatalf("expected max_streams=8, got %d", sb.Multiplex.MaxStreams)
 	}
 }
+
+func TestBuildInboundGroup_ShadowTLS(t *testing.T) {
+	ib := database.InboundConfig{
+		Tag:               "ru-stls-v3",
+		Protocol:          "shadowtls",
+		ListenPort:        8446,
+		ShadowTLSVersion:  3,
+		ShadowTLSPassword: "outer-password",
+		CoverDomain:       "gosuslugi.ru",
+		InnerMethod:       "2022-blake3-aes-128-gcm",
+		InnerPassword:     "inner-password",
+		ExitOutbound:      "direct",
+	}
+	users := []database.User{
+		{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"},
+	}
+	group := buildInboundGroup(ib, users)
+	if len(group) != 2 {
+		t.Fatalf("expected 2 inbounds (shadowtls + shadowsocks), got %d", len(group))
+	}
+	b0, _ := json.Marshal(group[0])
+	got0 := string(b0)
+	if !strings.Contains(got0, `"type":"shadowtls"`) {
+		t.Fatalf("expected first inbound shadowtls, got %s", got0)
+	}
+	if !strings.Contains(got0, `"listen_port":8446`) {
+		t.Fatalf("expected port 8446 on shadowtls, got %s", got0)
+	}
+	if !strings.Contains(got0, `"server":"gosuslugi.ru"`) {
+		t.Fatalf("expected handshake server=gosuslugi.ru, got %s", got0)
+	}
+	if !strings.Contains(got0, `"detour":"ss-inner-ru-stls-v3"`) {
+		t.Fatalf("expected detour, got %s", got0)
+	}
+	b1, _ := json.Marshal(group[1])
+	got1 := string(b1)
+	if !strings.Contains(got1, `"type":"shadowsocks"`) {
+		t.Fatalf("expected second inbound shadowsocks, got %s", got1)
+	}
+	if !strings.Contains(got1, `"method":"2022-blake3-aes-128-gcm"`) {
+		t.Fatalf("expected method, got %s", got1)
+	}
+}
+
+func TestBuildInboundGroup_VLESS_ReturnsSingleElement(t *testing.T) {
+	ib := database.InboundConfig{
+		Tag:               "test-vless",
+		Protocol:          "vless",
+		ListenPort:        2059,
+		TLSType:           "reality",
+		SNI:               "yastatic.net",
+		Transport:         "xhttp",
+		UserType:          "new",
+		RealityPrivateKey: "priv",
+		RealityShortIDs:   database.JSONStringArray{"abcd"},
+	}
+	group := buildInboundGroup(ib, nil)
+	if len(group) != 1 {
+		t.Fatalf("expected 1 inbound for vless, got %d", len(group))
+	}
+}

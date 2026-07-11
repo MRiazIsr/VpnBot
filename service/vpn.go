@@ -29,7 +29,7 @@ const ApiAddr = "127.0.0.1:10000" // Порт для gRPC API
 type SingBoxConfig struct {
 	Log          LogConfig           `json:"log"`
 	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
-	Inbounds     []SingboxInbound    `json:"inbounds"`
+	Inbounds     []any               `json:"inbounds"`
 	Outbounds    []any               `json:"outbounds"`
 	Route        *RouteConfig        `json:"route,omitempty"`
 }
@@ -171,6 +171,61 @@ func buildUserNames(users []database.User) []string {
 	return result
 }
 
+// buildInboundGroup возвращает 1+ sing-box inbound-объектов для одной DB-записи.
+// Для vless/hysteria2 — 1 элемент (типизированный SingboxInbound).
+// Для shadowtls — 2 элемента (shadowtls + inner shadowsocks).
+func buildInboundGroup(ib database.InboundConfig, users []database.User) []any {
+	if ib.Protocol == "shadowtls" {
+		return buildShadowTLSGroup(ib, users)
+	}
+	return []any{buildSingboxInbound(ib, users)}
+}
+
+// buildShadowTLSGroup строит пару shadowtls+shadowsocks для одного inbound.
+// ShadowTLS сам по себе не даёт proxy — оборачивает inner shadowsocks на loopback.
+func buildShadowTLSGroup(ib database.InboundConfig, users []database.User) []any {
+	innerTag := "ss-inner-" + ib.Tag
+
+	// shadowtls-users: общий пароль внешней инкапсуляции.
+	stlsUsers := []map[string]any{
+		{"name": "default", "password": ib.ShadowTLSPassword},
+	}
+	shadowtls := map[string]any{
+		"type":        "shadowtls",
+		"tag":         ib.Tag,
+		"listen":      "::",
+		"listen_port": ib.ListenPort,
+		"version":     ib.ShadowTLSVersion,
+		"users":       stlsUsers,
+		"handshake": map[string]any{
+			"server":      ib.CoverDomain,
+			"server_port": 443,
+		},
+		"detour": innerTag,
+	}
+
+	// shadowsocks-users: per-user (UUID как pre-shared уникальный per-user password).
+	// Note: InnerPassword — общий inbound-password. Per-user password добавлен для future extension.
+	innerUsers := []map[string]any{}
+	for _, u := range users {
+		innerUsers = append(innerUsers, map[string]any{
+			"name":     u.Username,
+			"password": ib.InnerPassword,
+		})
+	}
+	shadowsocks := map[string]any{
+		"type":        "shadowsocks",
+		"tag":         innerTag,
+		"listen":      "127.0.0.1",
+		"listen_port": 0,
+		"method":      ib.InnerMethod,
+		"password":    ib.InnerPassword,
+		"users":       innerUsers,
+	}
+
+	return []any{shadowtls, shadowsocks}
+}
+
 func buildSingboxInbound(ib database.InboundConfig, users []database.User) SingboxInbound {
 	var ibUsers interface{}
 	switch ib.UserType {
@@ -263,11 +318,12 @@ func loadExtraOutbound() (map[string]any, error) {
 // extraOutbound (nil ok) инжектится в начало outbounds.
 // finalTag (пусто ok) — тег route.final; если пусто, используется "direct".
 func buildSingBoxConfig(inbounds []database.InboundConfig, users []database.User, extraOutbound map[string]any, finalTag string) SingBoxConfig {
-	singboxInbounds := []SingboxInbound{}
+	singboxInbounds := []any{}
 	inboundTags := []string{}
 	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
-		singboxInbounds = append(singboxInbounds, buildSingboxInbound(ib, users))
+		group := buildInboundGroup(ib, users)
+		singboxInbounds = append(singboxInbounds, group...)
 		inboundTags = append(inboundTags, ib.Tag)
 		if ib.ExitOutbound != "" {
 			perInboundRules = append(perInboundRules, RouteRule{
