@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -301,5 +302,41 @@ func TestBuildInboundGroup_VLESS_ReturnsSingleElement(t *testing.T) {
 	group := buildInboundGroup(ib, nil)
 	if len(group) != 1 {
 		t.Fatalf("expected 1 inbound for vless, got %d", len(group))
+	}
+}
+
+func TestGenerateLinkForInbound_ShadowTLS(t *testing.T) {
+	ib := database.InboundConfig{
+		Tag:               "ru-stls-v3",
+		Protocol:          "shadowtls",
+		ListenPort:        8446,
+		ShadowTLSVersion:  3,
+		ShadowTLSPassword: "outer-pass",
+		CoverDomain:       "gosuslugi.ru",
+		InnerMethod:       "2022-blake3-aes-128-gcm",
+		InnerPassword:     "inner-pass",
+	}
+	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
+	link := GenerateLinkForInbound(ib, user, "194.87.80.237")
+	if !strings.HasPrefix(link, "sing-box://") {
+		t.Fatalf("expected sing-box://, got %q", link)
+	}
+	payload := strings.TrimPrefix(link, "sing-box://")
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		t.Fatalf("payload not base64: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `"server":"194.87.80.237"`) {
+		t.Fatalf("expected server IP, got %s", got)
+	}
+	if !strings.Contains(got, `"password":"outer-pass"`) {
+		t.Fatalf("expected outer password, got %s", got)
+	}
+	if !strings.Contains(got, `"server_name":"gosuslugi.ru"`) {
+		t.Fatalf("expected cover domain in SNI, got %s", got)
+	}
+	if !strings.Contains(got, `"fingerprint":"chrome"`) {
+		t.Fatalf("expected chrome uTLS, got %s", got)
 	}
 }

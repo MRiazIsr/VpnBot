@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -412,6 +413,10 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 		serverAddr = ib.ServerAddress
 	}
 
+	if ib.Protocol == "shadowtls" {
+		return generateShadowTLSLink(ib, user, serverAddr)
+	}
+
 	fingerprint := ib.Fingerprint
 	if fingerprint == "" {
 		fingerprint = "random"
@@ -478,6 +483,40 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 	}
 
 	return ""
+}
+
+// generateShadowTLSLink returns a base64-encoded sing-box outbound bundle URL
+// for a ShadowTLS-v3 inbound (shadowtls-out wrapping inner shadowsocks-out).
+// Client (sing-box native) imports this as a full outbound bundle.
+func generateShadowTLSLink(ib database.InboundConfig, user database.User, serverAddr string) string {
+	payload := map[string]any{
+		"type":        "shadowtls",
+		"tag":         ib.Tag + "-out",
+		"server":      serverAddr,
+		"server_port": ib.ListenPort,
+		"version":     ib.ShadowTLSVersion,
+		"password":    ib.ShadowTLSPassword,
+		"tls": map[string]any{
+			"enabled":     true,
+			"server_name": ib.CoverDomain,
+			"utls": map[string]any{
+				"enabled":     true,
+				"fingerprint": "chrome",
+			},
+		},
+		"detour": "ss-inner-out",
+	}
+	inner := map[string]any{
+		"type":     "shadowsocks",
+		"tag":      "ss-inner-out",
+		"method":   ib.InnerMethod,
+		"password": ib.InnerPassword,
+	}
+	bundle := map[string]any{
+		"outbounds": []any{payload, inner},
+	}
+	b, _ := json.Marshal(bundle)
+	return "sing-box://" + base64.StdEncoding.EncodeToString(b)
 }
 
 func ReloadService() error {
