@@ -265,6 +265,53 @@ func Init(path string) {
 		for _, ib := range builtins {
 			DB.Create(&ib)
 		}
+
+		// Direct-exit inbounds (RuVDS выход) — не builtin, placeholder Reality keys.
+		directExits := []InboundConfig{
+			{
+				Tag:               "vless-direct-xhttp",
+				DisplayName:       "VLESS Direct-Exit (xhttp)",
+				Protocol:          "vless",
+				ListenPort:        2059,
+				TLSType:           "reality",
+				SNI:               "yastatic.net",
+				Transport:         "xhttp",
+				UserType:          "new",
+				Flow:              "",
+				Multiplex:         false,
+				Enabled:           false, // отключены до заполнения ключей
+				IsBuiltin:         false,
+				SortOrder:         10,
+				ExitOutbound:      "direct",
+				RealityPrivateKey: "REPLACE_ME_VIA_API",
+				RealityPublicKey:  "REPLACE_ME_VIA_API",
+				RealityShortIDs:   JSONStringArray{"REPLACE_ME"},
+				Fingerprint:       "random",
+			},
+			{
+				Tag:               "vless-direct-tcp",
+				DisplayName:       "VLESS Direct-Exit (tcp)",
+				Protocol:          "vless",
+				ListenPort:        2060,
+				TLSType:           "reality",
+				SNI:               "yastatic.net",
+				Transport:         "",
+				UserType:          "legacy",
+				Flow:              "xtls-rprx-vision",
+				Multiplex:         false,
+				Enabled:           false, // отключены до заполнения ключей
+				IsBuiltin:         false,
+				SortOrder:         11,
+				ExitOutbound:      "direct",
+				RealityPrivateKey: "REPLACE_ME_VIA_API",
+				RealityPublicKey:  "REPLACE_ME_VIA_API",
+				RealityShortIDs:   JSONStringArray{"REPLACE_ME"},
+				Fingerprint:       "random",
+			},
+		}
+		for _, ib := range directExits {
+			DB.Create(&ib)
+		}
 	}
 }
 
