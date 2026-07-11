@@ -1,0 +1,18 @@
+[Unit]
+Description=zapret nfqws (DPI desync, обход ТСПУ для direct-exit трафика)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/zapret/nfq/nfqws --qnum=100 \
+  --dpi-desync=split \
+  --dpi-desync-split-pos=2 \
+  --dpi-desync-ttl=5 \
+  --dpi-desync-fooling=badseq
+Restart=on-failure
+RestartSec=3
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

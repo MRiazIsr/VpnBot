@@ -1,0 +1,10 @@
+# Маркирует TCP-egress через eth0 (публичный интерфейс RuVDS) в NFQUEUE 100.
+# Не трогает wg0 (wg-туннель к Hetzner изолирован).
+# После NFQUEUE nfqws применяет dpi-desync к пакетам.
+
+table inet zapret {
+    chain output {
+        type filter hook output priority mangle; policy accept;
+        oifname "eth0" tcp dport { 80, 443, 8080, 8443 } queue num 100 bypass
+    }
+}
