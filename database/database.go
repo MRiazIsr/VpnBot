@@ -282,7 +282,8 @@ func Init(path string) {
 				Flow:              "",
 				Multiplex:         true,
 				MuxPadding:        true,
-				MuxMaxStreams:     8,
+				// MuxMaxStreams is intentionally 0 — sing-box rejects max_streams
+				// on VLESS inbound side (it's only valid on outbound/client-side mux).
 				Enabled:           false, // отключены до заполнения ключей
 				IsBuiltin:         false,
 				SortOrder:         10,
