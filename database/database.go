@@ -81,6 +81,41 @@ type TelemetConfig struct {
 	TLSDomain     string `json:"tls_domain"`
 	ServerAddress string `json:"server_address"` // IP/домен для ссылок. Пусто = SERVER_IP
 	ProxyTag      string `json:"proxy_tag"`      // proxy tag от @MTProxyBot (32 hex chars)
+	RuVDSEnabled  bool   `gorm:"default:false" json:"ruvds_enabled"` // Запустить telemt на RuVDS через SSH
+}
+
+// HealthConfig — настройки HEALTH ALARM (синглтон, как TelemetConfig).
+type HealthConfig struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Enabled        bool `gorm:"default:true" json:"enabled"`
+	IntervalSec    int  `gorm:"default:60" json:"interval_sec"`
+	DownHysteresis int  `gorm:"default:2" json:"down_hysteresis"`
+}
+
+// WireGuardConfig — настройки WG-туннеля RuVDS → Hetzner (синглтон).
+// На Hetzner крутится kernel WG (wg-quick@wg0), на RuVDS — userspace WG
+// внутри sing-box (тип outbound "wireguard"), kernel WG на RuVDS не нужен.
+type WireGuardConfig struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Enabled           bool   `gorm:"default:false" json:"enabled"`
+	HetznerPublicKey  string `json:"hetzner_public_key"`
+	HetznerPrivateKey string `json:"-"` // не выдаём в JSON
+	RuVDSPublicKey    string `json:"ruvds_public_key"`
+	RuVDSPrivateKey   string `json:"-"` // не выдаём в JSON
+	ListenPort        int    `gorm:"default:51820" json:"listen_port"`
+	HetznerWGIP       string `gorm:"default:'10.8.0.1'" json:"hetzner_wg_ip"`
+	RuVDSWGIP         string `gorm:"default:'10.8.0.2'" json:"ruvds_wg_ip"`
+	MTU               int    `gorm:"default:1408" json:"mtu"`
+	Status            string `gorm:"default:'inactive'" json:"status"`
+	StatusMsg         string `json:"status_message"`
 }
 
 // TurnConfig — настройки VK TURN туннеля (синглтон, одна запись)
@@ -144,6 +179,9 @@ type InboundConfig struct {
 
 	ServerAddress string `json:"server_address"` // Адрес для ссылок (домен или IP). Пусто = SERVER_IP
 
+	// Phase 2: если true, sing-box на RuVDS тоже слушает этот inbound (зеркало)
+	RuVDSEnabled bool `gorm:"default:false" json:"ruvds_enabled"`
+
 	// Reality keys (per-inbound)
 	RealityPrivateKey string          `json:"reality_private_key"`
 	RealityPublicKey  string          `json:"reality_public_key"`
@@ -168,7 +206,7 @@ func Init(path string) {
 	}
 
 	// Миграция схемы
-	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{}, &TurnConfig{})
+	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{}, &TurnConfig{}, &WireGuardConfig{}, &HealthConfig{})
 	if err != nil {
 		log.Fatal("Migration failed:", err)
 	}
@@ -342,6 +380,11 @@ func Init(path string) {
 			InnerPassword:     "REPLACE_ME_BASE64_16B",
 		}
 		DB.Create(&shadowtlsSeed)
+	}
+
+	var hc HealthConfig
+	if DB.First(&hc).Error != nil {
+		DB.Create(&HealthConfig{Enabled: true, IntervalSec: 60, DownHysteresis: 2})
 	}
 }
 

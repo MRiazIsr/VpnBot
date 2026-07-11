@@ -12,10 +12,13 @@ func GetTelemetConfig() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var cfg database.TelemetConfig
 		if err := database.DB.First(&cfg).Error; err != nil {
-			// Конфига ещё нет — возвращаем дефолтный
+			// Конфига ещё нет — возвращаем дефолтный.
+			// lk.rt.ru: домен Ростелекома — RKN гарантированно не блокирует,
+			// при этом не входит в "канонические" фронты MTProxy типа dl.google.com,
+			// которые ТСПУ ассоциирует с прокси-инфраструктурой.
 			c.JSON(200, database.TelemetConfig{
 				Port:      9443,
-				TLSDomain: "dl.google.com",
+				TLSDomain: "lk.rt.ru",
 			})
 			return
 		}
@@ -32,6 +35,7 @@ func UpdateTelemetConfig() gin.HandlerFunc {
 			TLSDomain     string `json:"tls_domain"`
 			ServerAddress string `json:"server_address"`
 			ProxyTag      string `json:"proxy_tag"`
+			RuVDSEnabled  bool   `json:"ruvds_enabled"`
 		}
 		if err := c.ShouldBindJSON(&input); err != nil {
 			c.JSON(400, gin.H{"error": "Invalid input"})
@@ -53,6 +57,7 @@ func UpdateTelemetConfig() gin.HandlerFunc {
 				TLSDomain:     input.TLSDomain,
 				ServerAddress: input.ServerAddress,
 				ProxyTag:      input.ProxyTag,
+				RuVDSEnabled:  input.RuVDSEnabled,
 			}
 			database.DB.Create(&cfg)
 		} else {
@@ -62,6 +67,7 @@ func UpdateTelemetConfig() gin.HandlerFunc {
 			cfg.TLSDomain = input.TLSDomain
 			cfg.ServerAddress = input.ServerAddress
 			cfg.ProxyTag = input.ProxyTag
+			cfg.RuVDSEnabled = input.RuVDSEnabled
 			database.DB.Save(&cfg)
 		}
 

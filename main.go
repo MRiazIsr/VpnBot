@@ -30,6 +30,21 @@ func main() {
 		log.Println("Error setting up VK TURN tunnel:", err)
 	}
 
+	// Настройка WireGuard-туннеля RuVDS↔Hetzner (если включён в БД)
+	if err := service.SetupWireGuard(); err != nil {
+		log.Println("Error setting up WireGuard:", err)
+	}
+
+	// Установка sing-box на RuVDS (если WG включён)
+	if err := service.SetupSingboxRuVDS(); err != nil {
+		log.Println("Error setting up sing-box on RuVDS:", err)
+	}
+
+	// Установка telemt на RuVDS (если TelemetConfig.RuVDSEnabled)
+	if err := service.SetupTelemtRuVDS(); err != nil {
+		log.Println("Error setting up telemt on RuVDS:", err)
+	}
+
 	botToken := os.Getenv("BOT_TOKEN")
 	adminID := int64(124343839)
 	if envAdminID := os.Getenv("ADMIN_ID"); envAdminID != "" {

@@ -69,6 +69,13 @@ func SetupRouter(r *gin.Engine) {
 			auth.POST("/turn/create-call", handlers.CreateVKCall())
 			auth.POST("/turn/test-creds", handlers.TestTurnCreds())
 
+			// VK TURN Client (RuVDS)
+			auth.POST("/turn/client/setup", handlers.SetupTurnClient())
+			auth.POST("/turn/client/start", handlers.StartTurnClient())
+			auth.POST("/turn/client/stop", handlers.StopTurnClient())
+			auth.GET("/turn/client/status", handlers.GetTurnClientStatus())
+			auth.GET("/turn/client/link", handlers.GetTurnClientLink())
+
 			// Telemt (MTProto proxy)
 			auth.GET("/telemt/config", handlers.GetTelemetConfig())
 			auth.POST("/telemt/config", handlers.UpdateTelemetConfig())
@@ -77,9 +84,38 @@ func SetupRouter(r *gin.Engine) {
 			auth.GET("/telemt/status", handlers.GetTelemetStatus())
 			auth.GET("/telemt/users", handlers.GetTelemetUsers())
 			auth.POST("/telemt/sync", handlers.SyncTelemetUsers())
+
+			// WireGuard tunnel (RuVDS ↔ Hetzner)
+			auth.GET("/wireguard/config", handlers.GetWireGuardConfig())
+			auth.PUT("/wireguard/config", handlers.UpdateWireGuardConfig())
+			auth.POST("/wireguard/setup", handlers.SetupWireGuard())
+			auth.POST("/wireguard/restart", handlers.RestartWireGuard())
+			auth.POST("/wireguard/stop", handlers.StopWireGuard())
+			auth.GET("/wireguard/status", handlers.GetWireGuardStatus())
+
+			// Sing-box mirror on RuVDS
+			auth.POST("/singbox/ruvds/setup", handlers.SetupSingboxRuVDS())
+			auth.POST("/singbox/ruvds/reload", handlers.ReloadSingboxRuVDS())
+			auth.POST("/singbox/ruvds/start", handlers.StartSingboxRuVDS())
+			auth.POST("/singbox/ruvds/stop", handlers.StopSingboxRuVDS())
+			auth.GET("/singbox/ruvds/status", handlers.GetSingboxRuVDSStatus())
+			auth.GET("/singbox/ruvds/config", handlers.PreviewSingboxRuVDSConfig())
+			auth.GET("/singbox/ruvds/logs", handlers.GetSingboxRuVDSLogs())
+			auth.POST("/singbox/ruvds/rollback", handlers.RollbackRuVDSSingbox())
+
+			// Telemt mirror on RuVDS
+			auth.POST("/telemt/ruvds/setup", handlers.SetupTelemtRuVDS())
+			auth.POST("/telemt/ruvds/reload", handlers.ReloadTelemtRuVDS())
+			auth.POST("/telemt/ruvds/start", handlers.StartTelemtRuVDS())
+			auth.POST("/telemt/ruvds/stop", handlers.StopTelemtRuVDS())
+			auth.GET("/telemt/ruvds/status", handlers.GetTelemtRuVDSStatus())
+			auth.GET("/telemt/ruvds/logs", handlers.GetTelemtRuVDSLogs())
+			auth.GET("/telemt/ruvds/diagnose", handlers.DiagnoseTelemtRuVDS())
+			auth.POST("/telemt/ruvds/upgrade", handlers.UpgradeTelemtRuVDS())
 		}
 	}
 
-	// Public subscription endpoint
-	r.GET("/sub/:token", handlers.GetSubscription())
+	// Public subscription endpoints
+	r.GET("/sub/:token", handlers.GetSubscription())              // Hetzner-направленная (backward compat)
+	r.GET("/sub-ruvds/:token", handlers.GetSubscriptionRuVDS())   // RuVDS-направленная (новая)
 }

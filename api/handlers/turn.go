@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"net/http"
 	"vpnbot/database"
 	"vpnbot/service"
 
@@ -113,23 +114,39 @@ func StopTurn() gin.HandlerFunc {
 	}
 }
 
-// GET /api/turn/status — статус сервиса
+// GET /api/turn/status — статус сервера и клиента
 func GetTurnStatus() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		running := service.IsTurnProxyRunning()
-		status := "stopped"
-		if running {
-			status = "running"
+		serverRunning := service.IsTurnProxyRunning()
+		serverStatus := "stopped"
+		if serverRunning {
+			serverStatus = "running"
+		}
+
+		clientRunning := service.IsTurnClientRunning()
+		clientStatus := "stopped"
+		if clientRunning {
+			clientStatus = "running"
+		}
+		if !service.IsPortForwardConfigured() {
+			clientStatus = "not_configured"
 		}
 
 		var cfg database.TurnConfig
 		database.DB.First(&cfg)
 
 		c.JSON(200, gin.H{
-			"status":       status,
+			"server": gin.H{
+				"status":      serverStatus,
+				"tunnel_port": cfg.TunnelPort,
+				"forward_port": cfg.ForwardPort,
+			},
+			"client": gin.H{
+				"status":      clientStatus,
+				"ruvds_ip":    service.GetRuVDSIP(),
+				"listen_port": cfg.ForwardPort,
+			},
 			"vk_join_link": cfg.VKJoinLink,
-			"tunnel_port":  cfg.TunnelPort,
-			"forward_port": cfg.ForwardPort,
 			"streams":      cfg.Streams,
 			"status_msg":   cfg.StatusMsg,
 		})
@@ -185,6 +202,101 @@ func TestTurnCreds() gin.HandlerFunc {
 		c.JSON(200, gin.H{
 			"turn_server": turnServer,
 			"message":     "Credentials работают",
+		})
+	}
+}
+
+// --- RuVDS Client ---
+
+// POST /api/turn/client/setup — полная установка клиента на RuVDS
+func SetupTurnClient() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := service.SetupTurnClient(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"message": "vk-turn-client установлен и запущен на RuVDS"})
+	}
+}
+
+// POST /api/turn/client/start — запустить клиент на RuVDS
+func StartTurnClient() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := service.StartTurnClient(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"message": "vk-turn-client запущен"})
+	}
+}
+
+// POST /api/turn/client/stop — остановить клиент на RuVDS
+func StopTurnClient() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := service.StopTurnClient(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"message": "vk-turn-client остановлен"})
+	}
+}
+
+// GET /api/turn/client/status — статус клиента на RuVDS
+func GetTurnClientStatus() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		running := service.IsTurnClientRunning()
+		configured := service.IsPortForwardConfigured()
+
+		status := "stopped"
+		if running {
+			status = "running"
+		}
+		if !configured {
+			status = "not_configured"
+		}
+
+		var cfg database.TurnConfig
+		database.DB.First(&cfg)
+
+		c.JSON(200, gin.H{
+			"status":       status,
+			"configured":   configured,
+			"ruvds_ip":     service.GetRuVDSIP(),
+			"listen_port":  cfg.ForwardPort,
+			"vk_join_link": cfg.VKJoinLink,
+			"streams":      cfg.Streams,
+		})
+	}
+}
+
+// GET /api/turn/client/link — получить hysteria2 ссылку для подключения через VK TURN
+func GetTurnClientLink() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var cfg database.TurnConfig
+		if err := database.DB.First(&cfg).Error; err != nil {
+			c.JSON(400, gin.H{"error": "TURN конфиг не найден"})
+			return
+		}
+
+		// Возвращаем шаблон ссылки и ссылки для всех активных пользователей
+		var users []database.User
+		database.DB.Where("status = ?", "active").Find(&users)
+
+		links := []gin.H{}
+		for _, u := range users {
+			link := service.GetTurnClientLink(u, cfg)
+			if link != "" {
+				links = append(links, gin.H{
+					"username": u.Username,
+					"link":     link,
+				})
+			}
+		}
+
+		c.JSON(200, gin.H{
+			"links":    links,
+			"ruvds_ip": service.GetRuVDSIP(),
+			"port":     cfg.ForwardPort,
 		})
 	}
 }
