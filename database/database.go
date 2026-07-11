@@ -169,10 +169,13 @@ type InboundConfig struct {
 	ServiceName string `json:"service_name"`
 	UserType    string `json:"user_type"` // "legacy" | "new" | "hy2"
 	Flow        string `json:"flow"`      // "xtls-rprx-vision" | ""
-	Multiplex   bool   `json:"multiplex"`
-	Enabled     bool   `gorm:"default:true" json:"enabled"`
-	IsBuiltin   bool   `gorm:"default:false" json:"is_builtin"`
-	SortOrder   int    `gorm:"default:0" json:"sort_order"`
+	Multiplex     bool `json:"multiplex"`
+	MuxPadding    bool `json:"mux_padding"`
+	MuxMaxStreams int  `gorm:"default:0" json:"mux_max_streams"`
+	Enabled      bool   `gorm:"default:true" json:"enabled"`
+	IsBuiltin    bool   `gorm:"default:false" json:"is_builtin"`
+	SortOrder    int    `gorm:"default:0" json:"sort_order"`
+	ExitOutbound string `json:"exit_outbound"` // "" (=route.final) | "direct" | "wg-out"
 
 	ServerAddress string `json:"server_address"` // Адрес для ссылок (домен или IP). Пусто = SERVER_IP
 
@@ -184,6 +187,13 @@ type InboundConfig struct {
 	RealityPublicKey  string          `json:"reality_public_key"`
 	RealityShortIDs   JSONStringArray `json:"reality_short_ids" gorm:"type:text"`
 	Fingerprint       string          `json:"fingerprint"`
+
+	// ShadowTLS fields (Protocol="shadowtls")
+	ShadowTLSPassword string `json:"shadowtls_password"`
+	ShadowTLSVersion  int    `gorm:"default:0" json:"shadowtls_version"`
+	CoverDomain       string `json:"cover_domain"`
+	InnerMethod       string `json:"inner_method"`
+	InnerPassword     string `json:"inner_password"`
 }
 
 // --- Init ---
@@ -302,6 +312,74 @@ func Init(path string) {
 		for _, ib := range builtins {
 			DB.Create(&ib)
 		}
+
+		// Direct-exit inbounds (RuVDS выход) — не builtin, placeholder Reality keys.
+		directExits := []InboundConfig{
+			{
+				Tag:               "vless-direct-xhttp",
+				DisplayName:       "VLESS Direct-Exit (xhttp)",
+				Protocol:          "vless",
+				ListenPort:        2059,
+				TLSType:           "reality",
+				SNI:               "yastatic.net",
+				Transport:         "xhttp",
+				UserType:          "new",
+				Flow:              "",
+				Multiplex:         true,
+				MuxPadding:        true,
+				// MuxMaxStreams is intentionally 0 — sing-box rejects max_streams
+				// on VLESS inbound side (it's only valid on outbound/client-side mux).
+				Enabled:           false, // отключены до заполнения ключей
+				IsBuiltin:         false,
+				SortOrder:         10,
+				ExitOutbound:      "direct",
+				RealityPrivateKey: "REPLACE_ME_VIA_API",
+				RealityPublicKey:  "REPLACE_ME_VIA_API",
+				RealityShortIDs:   JSONStringArray{"REPLACE_ME"},
+				Fingerprint:       "chrome",
+			},
+			{
+				Tag:               "vless-direct-tcp",
+				DisplayName:       "VLESS Direct-Exit (tcp)",
+				Protocol:          "vless",
+				ListenPort:        2060,
+				TLSType:           "reality",
+				SNI:               "yastatic.net",
+				Transport:         "",
+				UserType:          "legacy",
+				Flow:              "xtls-rprx-vision",
+				Multiplex:         false,
+				Enabled:           false, // отключены до заполнения ключей
+				IsBuiltin:         false,
+				SortOrder:         11,
+				ExitOutbound:      "direct",
+				RealityPrivateKey: "REPLACE_ME_VIA_API",
+				RealityPublicKey:  "REPLACE_ME_VIA_API",
+				RealityShortIDs:   JSONStringArray{"REPLACE_ME"},
+				Fingerprint:       "chrome",
+			},
+		}
+		for _, ib := range directExits {
+			DB.Create(&ib)
+		}
+
+		// ShadowTLS v3 direct-exit inbound — disabled до задания секретов через API.
+		shadowtlsSeed := InboundConfig{
+			Tag:               "RU-STLS",
+			DisplayName:       "RU-STLS",
+			Protocol:          "shadowtls",
+			ListenPort:        8446,
+			Enabled:           false,
+			IsBuiltin:         false,
+			SortOrder:         12,
+			ExitOutbound:      "direct",
+			ShadowTLSVersion:  3,
+			ShadowTLSPassword: "REPLACE_ME_VIA_API",
+			CoverDomain:       "gosuslugi.ru",
+			InnerMethod:       "2022-blake3-aes-128-gcm",
+			InnerPassword:     "REPLACE_ME_BASE64_16B",
+		}
+		DB.Create(&shadowtlsSeed)
 	}
 
 	var hc HealthConfig

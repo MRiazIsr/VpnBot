@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -29,17 +30,18 @@ const ApiAddr = "127.0.0.1:10000" // Порт для gRPC API
 type SingBoxConfig struct {
 	Log          LogConfig           `json:"log"`
 	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
-	Inbounds     []SingboxInbound    `json:"inbounds"`
-	Outbounds    []OutboundConfig    `json:"outbounds"`
+	Inbounds     []any               `json:"inbounds"`
+	Outbounds    []any               `json:"outbounds"`
 	Route        *RouteConfig        `json:"route,omitempty"`
 }
 
 type RouteConfig struct {
-	Final string      `json:"final,omitempty"`
 	Rules []RouteRule `json:"rules,omitempty"`
+	Final string      `json:"final,omitempty"`
 }
 
 type RouteRule struct {
+	Inbound      []string `json:"inbound,omitempty"`
 	DomainSuffix []string `json:"domain_suffix,omitempty"`
 	IPCIDR       []string `json:"ip_cidr,omitempty"`
 	Outbound     string   `json:"outbound"`
@@ -85,7 +87,9 @@ type TransportConfig struct {
 }
 
 type MultiplexConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled    bool `json:"enabled"`
+	Padding    bool `json:"padding,omitempty"`
+	MaxStreams int  `json:"max_streams,omitempty"`
 }
 
 type Hysteria2User struct {
@@ -176,6 +180,61 @@ func buildUserNames(users []database.User) []string {
 	return result
 }
 
+// buildInboundGroup возвращает 1+ sing-box inbound-объектов для одной DB-записи.
+// Для vless/hysteria2 — 1 элемент (типизированный SingboxInbound).
+// Для shadowtls — 2 элемента (shadowtls + inner shadowsocks).
+func buildInboundGroup(ib database.InboundConfig, users []database.User) []any {
+	if ib.Protocol == "shadowtls" {
+		return buildShadowTLSGroup(ib, users)
+	}
+	return []any{buildSingboxInbound(ib, users)}
+}
+
+// buildShadowTLSGroup строит пару shadowtls+shadowsocks для одного inbound.
+// ShadowTLS сам по себе не даёт proxy — оборачивает inner shadowsocks на loopback.
+func buildShadowTLSGroup(ib database.InboundConfig, users []database.User) []any {
+	innerTag := "ss-inner-" + ib.Tag
+
+	// shadowtls-users: общий пароль внешней инкапсуляции.
+	stlsUsers := []map[string]any{
+		{"name": "default", "password": ib.ShadowTLSPassword},
+	}
+	shadowtls := map[string]any{
+		"type":        "shadowtls",
+		"tag":         ib.Tag,
+		"listen":      "::",
+		"listen_port": ib.ListenPort,
+		"version":     ib.ShadowTLSVersion,
+		"users":       stlsUsers,
+		"handshake": map[string]any{
+			"server":      ib.CoverDomain,
+			"server_port": 443,
+		},
+		"detour": innerTag,
+	}
+
+	// shadowsocks-users: per-user (UUID как pre-shared уникальный per-user password).
+	// Note: InnerPassword — общий inbound-password. Per-user password добавлен для future extension.
+	innerUsers := []map[string]any{}
+	for _, u := range users {
+		innerUsers = append(innerUsers, map[string]any{
+			"name":     u.Username,
+			"password": ib.InnerPassword,
+		})
+	}
+	shadowsocks := map[string]any{
+		"type":        "shadowsocks",
+		"tag":         innerTag,
+		"listen":      "127.0.0.1",
+		"listen_port": 0,
+		"method":      ib.InnerMethod,
+		"password":    ib.InnerPassword,
+		"users":       innerUsers,
+	}
+
+	return []any{shadowtls, shadowsocks}
+}
+
 func buildSingboxInbound(ib database.InboundConfig, users []database.User) SingboxInbound {
 	var ibUsers interface{}
 	switch ib.UserType {
@@ -236,28 +295,78 @@ func buildSingboxInbound(ib database.InboundConfig, users []database.User) Singb
 
 	// Multiplex
 	if ib.Multiplex {
-		sb.Multiplex = &MultiplexConfig{Enabled: true}
+		sb.Multiplex = &MultiplexConfig{
+			Enabled:    true,
+			Padding:    ib.MuxPadding,
+			MaxStreams: ib.MuxMaxStreams,
+		}
 	}
 
 	return sb
 }
 
-func GenerateAndReload() error {
-	var users []database.User
-	database.DB.Where("status = ?", "active").Find(&users)
+// loadExtraOutbound читает JSON-файл, указанный в EXTRA_OUTBOUND_JSON_PATH.
+// Возвращает (nil, nil) если env не задан. Возвращает ошибку если файл указан, но нечитаем.
+func loadExtraOutbound() (map[string]any, error) {
+	path := os.Getenv("EXTRA_OUTBOUND_JSON_PATH")
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read extra outbound: %w", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("parse extra outbound: %w", err)
+	}
+	return out, nil
+}
 
-	// Load enabled inbound configs from DB
-	var inbounds []database.InboundConfig
-	database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
-
-	singboxInbounds := []SingboxInbound{}
+// buildSingBoxConfig строит sing-box конфиг из inbound'ов + пользователей.
+// extraOutbound (nil ok) инжектится в начало outbounds.
+// finalTag (пусто ok) — тег route.final; если пусто, используется "direct".
+func buildSingBoxConfig(inbounds []database.InboundConfig, users []database.User, extraOutbound map[string]any, finalTag string) SingBoxConfig {
+	singboxInbounds := []any{}
 	inboundTags := []string{}
+	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
-		singboxInbounds = append(singboxInbounds, buildSingboxInbound(ib, users))
+		group := buildInboundGroup(ib, users)
+		singboxInbounds = append(singboxInbounds, group...)
 		inboundTags = append(inboundTags, ib.Tag)
+		if ib.ExitOutbound != "" {
+			perInboundRules = append(perInboundRules, RouteRule{
+				Inbound:  []string{ib.Tag},
+				Outbound: ib.ExitOutbound,
+			})
+		}
 	}
 
-	cfg := SingBoxConfig{
+	outbounds := []any{}
+	if extraOutbound != nil {
+		outbounds = append(outbounds, extraOutbound)
+	}
+	outbounds = append(outbounds,
+		OutboundConfig{Type: "direct", Tag: "direct"},
+		OutboundConfig{Type: "block", Tag: "block"},
+	)
+
+	if finalTag == "" {
+		finalTag = "direct"
+	}
+
+	bogonRule := RouteRule{
+		IPCIDR: []string{
+			"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+			"169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+			"0.0.0.0/8", "100.64.0.0/10",
+			"fc00::/7", "fe80::/10", "ff00::/8", "::/128",
+		},
+		Outbound: "block",
+	}
+	rules := append(perInboundRules, bogonRule)
+
+	return SingBoxConfig{
 		Log: LogConfig{
 			Level:     "info",
 			Timestamp: true,
@@ -273,12 +382,29 @@ func GenerateAndReload() error {
 				},
 			},
 		},
-		Inbounds: singboxInbounds,
-		Outbounds: []OutboundConfig{
-			{Type: "direct", Tag: "direct"},
-			{Type: "block", Tag: "block"},
+		Inbounds:  singboxInbounds,
+		Outbounds: outbounds,
+		Route: &RouteConfig{
+			Rules: rules,
+			Final: finalTag,
 		},
 	}
+}
+
+func GenerateAndReload() error {
+	var users []database.User
+	database.DB.Where("status = ?", "active").Find(&users)
+
+	var inbounds []database.InboundConfig
+	database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
+
+	extraOutbound, err := loadExtraOutbound()
+	if err != nil {
+		log.Println("Warning: extra outbound not loaded:", err)
+	}
+	finalTag := os.Getenv("ROUTE_FINAL")
+
+	cfg := buildSingBoxConfig(inbounds, users, extraOutbound, finalTag)
 
 	file, _ := json.MarshalIndent(cfg, "", "  ")
 
@@ -303,7 +429,8 @@ func GenerateAndReload() error {
 
 // GenerateRuVDSConfig строит JSON-конфиг sing-box для RuVDS-фронта:
 // те же inbounds что и на Hetzner + WireGuard outbound на Hetzner.
-// Маршрутизация: всё по умолчанию через wg-out (egress = Hetzner public IP).
+// Маршрутизация: всё по умолчанию через wg-out (egress = Hetzner public IP);
+// inbound'ы с ExitOutbound="direct" выходят локально с RuVDS-IP.
 func GenerateRuVDSConfig() ([]byte, error) {
 	wgCfg, err := GetWireGuardConfig()
 	if err != nil {
@@ -322,9 +449,17 @@ func GenerateRuVDSConfig() ([]byte, error) {
 	var inbounds []database.InboundConfig
 	database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
 
-	singboxInbounds := []SingboxInbound{}
+	singboxInbounds := []any{}
+	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
-		singboxInbounds = append(singboxInbounds, buildSingboxInbound(ib, users))
+		group := buildInboundGroup(ib, users)
+		singboxInbounds = append(singboxInbounds, group...)
+		if ib.ExitOutbound != "" {
+			perInboundRules = append(perInboundRules, RouteRule{
+				Inbound:  []string{ib.Tag},
+				Outbound: ib.ExitOutbound,
+			})
+		}
 	}
 
 	hetznerEndpoint := GetHetznerServerIP()
@@ -337,12 +472,13 @@ func GenerateRuVDSConfig() ([]byte, error) {
 			Output:    "/etc/sing-box/access.log",
 		},
 		Inbounds: singboxInbounds,
-		Outbounds: []OutboundConfig{
+		Outbounds: []any{
 			wgOutbound,
-			{Type: "direct", Tag: "direct"},
-			{Type: "block", Tag: "block"},
+			OutboundConfig{Type: "direct", Tag: "direct"},
+			OutboundConfig{Type: "block", Tag: "block"},
 		},
 		Route: &RouteConfig{
+			Rules: perInboundRules,
 			Final: "wg-out",
 		},
 	}
@@ -365,6 +501,10 @@ func GenerateAndReloadRuVDS() error {
 func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serverAddr string) string {
 	if ib.ServerAddress != "" {
 		serverAddr = ib.ServerAddress
+	}
+
+	if ib.Protocol == "shadowtls" {
+		return generateShadowTLSLink(ib, user, serverAddr)
 	}
 
 	fingerprint := ib.Fingerprint
@@ -433,6 +573,35 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 	}
 
 	return ""
+}
+
+// generateShadowTLSLink returns a Shadowsocks SIP002 URI with the shadow-tls
+// plugin, which Hiddify / Nekoray / v2rayN / sing-box all parse.
+// Format:
+//
+//	ss://<b64url(method:inner_password)>@server:port/?plugin=shadow-tls%3Bversion%3D3%3Bhost%3D...%3Bpassword%3D...#tag
+func generateShadowTLSLink(ib database.InboundConfig, _ database.User, serverAddr string) string {
+	userInfo := ib.InnerMethod + ":" + ib.InnerPassword
+	b64 := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(userInfo))
+
+	pluginOpts := fmt.Sprintf(
+		"shadow-tls;version=%d;host=%s;password=%s",
+		ib.ShadowTLSVersion,
+		ib.CoverDomain,
+		ib.ShadowTLSPassword,
+	)
+	q := url.Values{}
+	q.Set("plugin", pluginOpts)
+
+	u := url.URL{
+		Scheme:   "ss",
+		User:     url.User(b64),
+		Host:     fmt.Sprintf("%s:%d", serverAddr, ib.ListenPort),
+		Path:     "/",
+		RawQuery: q.Encode(),
+		Fragment: ib.Tag,
+	}
+	return u.String()
 }
 
 func ReloadService() error {

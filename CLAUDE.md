@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Backend (Go)
-go build -o vpnbot .          # Build binary
+go build -o vpnbot .           # Build binary
 go vet ./...                   # Lint/vet
+go test ./service/ -v          # Unit tests (config generation, link generation)
 go mod tidy                    # Sync dependencies
 
 # Frontend (Next.js admin panel)
@@ -28,7 +29,7 @@ VPN management system: Go backend + Telegram bot + Next.js admin panel.
 ### Packages
 
 - **`database/`** — GORM models (`User`, `InboundConfig`, `ConnectionLog`, `WireGuardConfig`, `TelemetConfig`, `TurnConfig`), SQLite init with auto-migration and seed data
-- **`service/`** — sing-box JSON config generation (`GenerateAndReload()` for Hetzner, `GenerateAndReloadRuVDS()` for RuVDS mirror), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go`), connectivity checks (`network.go`), VK TURN tunnel (`turnproxy.go`), WireGuard tunnel RuVDS↔Hetzner (`wireguard.go`), sing-box mirror on RuVDS via SSH (`singboxruvds.go`), telemt mirror on RuVDS via SSH (`telemtruvds.go`)
+- **`service/`** — sing-box JSON config generation (`GenerateAndReload()` for Hetzner + `GenerateAndReloadRuVDS()` for the RuVDS mirror over SSH), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go` + `portforward_nft.go`), connectivity checks (`network.go`), VK TURN tunnel (`turnproxy.go`), WireGuard tunnel RuVDS↔Hetzner (`wireguard.go`), sing-box mirror on RuVDS via SSH (`singboxruvds.go`), telemt mirror on RuVDS via SSH (`telemtruvds.go`), health monitoring (`service/health/`)
 - **`api/handlers/`** — REST handlers: auth, users, inbounds CRUD, stats, public subscription endpoints (`/sub/:token` for Hetzner, `/sub-ruvds/:token` for RuVDS)
 - **`api/middleware/`** — CORS and JWT Bearer auth
 - **`api/router/`** — Route registration under `/api` with auth group
@@ -36,42 +37,82 @@ VPN management system: Go backend + Telegram bot + Next.js admin panel.
 
 ### Key data flow
 
-1. `InboundConfig` records in DB define VPN inbounds (vless/hysteria2, ports, TLS, transport, Reality keys)
-2. `GenerateAndReload()` reads enabled `InboundConfig` + active `User` from DB → builds sing-box JSON → writes `/etc/sing-box/config.json` → `systemctl reload sing-box`
-3. Subscription endpoint (`/sub/:token`) calls `GenerateLinkForInbound()` for each enabled inbound → returns base64-encoded links
-4. Bot dynamically generates connection buttons from enabled InboundConfig records in DB
+1. `InboundConfig` records in DB define VPN inbounds (vless/hysteria2/shadowtls, ports, TLS, transport, Reality keys, ShadowTLS secrets)
+2. `buildSingBoxConfig()` (pure function) builds sing-box JSON from `[]InboundConfig` + `[]User` + optional extra outbound + `route.final` tag. `GenerateAndReload()` is the I/O wrapper — reads DB + env, calls builder, writes `/etc/sing-box/config.json`, calls `ReloadService()`.
+3. `buildInboundGroup()` returns `[]any` per DB inbound: 1 element for vless/hysteria2, 2 elements for shadowtls (paired outer `shadowtls` + inner `shadowsocks` on loopback).
+4. Subscription endpoint (`/sub/:token`) calls `GenerateLinkForInbound()` for each enabled inbound → returns base64-encoded links. Format: `vless://...#tag` for VLESS, `sing-box://<base64 JSON bundle>` for ShadowTLS.
+5. Bot dynamically generates connection buttons from enabled InboundConfig records in DB.
 
 ### InboundConfig model
 
 Drives both sing-box config generation and subscription links. Key fields:
-- `Protocol`: "vless" | "hysteria2"
-- `TLSType`: "reality" (uses per-inbound Reality keys) | "certificate" (uses cert_path/key_path)
-- `UserType`: "legacy" (with flow) | "new" (no flow) | "hy2" (password=UUID)
-- `Transport`: "" (TCP) | "http" | "grpc"
-- `ListenPort`: port for this inbound (required)
-- `SNI`: server name for TLS/Reality handshake (required for Reality inbounds)
-- `RealityPrivateKey`, `RealityPublicKey`, `RealityShortIDs`: per-inbound Reality keys
-- `Fingerprint`: TLS fingerprint for links (default "random")
-- `IsBuiltin`: true for 4 seed configs — cannot be deleted via API, only disabled
+
+- `Protocol`: `"vless"` | `"hysteria2"` | `"shadowtls"`
+- `Tag`, `DisplayName`: user-facing labels (visible as connection name in VPN clients)
+- `ListenPort`, `SNI`, `ServerAddress`: connection endpoint (`ServerAddress` empty = fall back to `SERVER_IP`)
+- `TLSType`: `"reality"` (uses per-inbound Reality keys) | `"certificate"` (uses cert_path/key_path) — applies to VLESS
+- `Transport`: `""` (TCP) | `"http"` | `"grpc"` | `"httpupgrade"` | `"xhttp"` | `"ws"`
+- `UserType`: `"legacy"` (with flow) | `"new"` (no flow) | `"hy2"` (password=UUID)
+- `Multiplex`, `MuxPadding`, `MuxMaxStreams`: sing-box multiplex block (note: `max_streams` is emitted but sing-box rejects it on VLESS inbound — leave `MuxMaxStreams=0`)
+- `ExitOutbound`: `""` (=route.final default) | `"direct"` | `"wg-out"` — emits per-inbound `route.rules` entry directing this inbound to a specific outbound
+- `RealityPrivateKey`, `RealityPublicKey`, `RealityShortIDs`, `Fingerprint`: per-inbound Reality keys + uTLS fingerprint (`"chrome"` for DPI-resistant handshake)
+- `ShadowTLSPassword`, `ShadowTLSVersion`, `CoverDomain`, `InnerMethod`, `InnerPassword`: ShadowTLS-only fields (Protocol="shadowtls")
+- `IsBuiltin`: `true` for original seed configs — cannot be deleted via API, only disabled
 
 ## Environment Variables
 
-`BOT_TOKEN`, `ADMIN_PASSWORD`, `JWT_SECRET`, `SERVER_IP` (default: 49.13.201.110), `ADMIN_ID` (Telegram ID).
+Required: `BOT_TOKEN`, `ADMIN_PASSWORD`, `JWT_SECRET`, `SERVER_IP` (default: 49.13.201.110), `ADMIN_ID` (Telegram ID).
+
+### Config generation (etap 1 rework)
+
+- `EXTRA_OUTBOUND_JSON_PATH` — optional path to a JSON file containing a single outbound object. If set and readable, its contents are prepended to `outbounds[]` at config generation time. **On RuVDS:** `/etc/vpnbot/extra-outbound.json` contains the `wg-out` block. On Hetzner: unset.
+- `ROUTE_FINAL` — overrides `route.final` tag (default `"direct"`). **On RuVDS:** `wg-out`. On Hetzner: unset.
+
+Note: these are relevant only if `vpnbot` binary runs on that host. Currently `vpnbot` runs only on Hetzner (see topology below).
 
 ### Network Management (optional)
 
-- `HETZNER_API_TOKEN` — Hetzner Cloud API token for firewall management
+- `HETZNER_API_TOKEN` — Hetzner Cloud API token for firewall management (`service/firewall.go`)
 - `HETZNER_SERVER_IP` — Hetzner server IP (default: falls back to `SERVER_IP` → 49.13.201.110)
-- `RUVDS_IP` — RuVDS public IP for SSH port forwarding management
+- `RUVDS_IP` — RuVDS public IP (194.87.80.237)
 - `RUVDS_SSH_USER` — SSH user (default: root)
 - `RUVDS_SSH_KEY_PATH` — Path to SSH private key (default: ~/.ssh/id_rsa)
 - `RUVDS_SSH_PORT` — SSH port (default: 22)
 
-Network topology — два независимых фронт-энда, существующих одновременно:
-- **Legacy:** `Client → Hetzner (sing-box, direct egress)` — для старых подписок на Hetzner-IP. Сохраняется как есть, ссылки не ломаются.
-- **RuVDS-фронт (опц., через WG):** `Client → RuVDS (sing-box mirror) → WireGuard userspace → Hetzner kernel WG (wg-quick@wg0) + MASQUERADE → Internet`. Используется когда `WireGuardConfig.Enabled=true` и `/sub-ruvds/:token` подписка. MTProto (telemt) на RuVDS — egress напрямую с русского IP к Telegram middle-proxy.
+## Production topology (2026-07-11)
 
-Hetzner Cloud Firewall controls inbound access; RuVDS iptables — legacy DNAT (для совместимости), новые VPN-порты обслуживаются sing-box на RuVDS напрямую. WireGuard порт (UDP 51820 по умолчанию) автоматически открывается через `OpenFirewallPort()` при `SetupWireGuard()`.
+Two servers, complementary roles:
+
+- **RuVDS** (194.87.80.237, RU): Frontend — clients connect here. Runs sing-box; config is written by Hetzner's `vpnbot` via SSH (`service/singboxruvds.go` → `GenerateAndReloadRuVDS()`). Terminates VLESS Reality + ShadowTLS handshakes.
+- **Hetzner** (49.13.201.110, DE): Backend — runs `vpnbot`, admin API (Caddy TLS on `myvpn-api.online:8443` → `:8085`), Telegram bot. Also runs sing-box as fallback / WireGuard exit for the tunnel from RuVDS. Kernel WG via `wg-quick@wg0` + iptables MASQUERADE.
+
+### Traffic paths
+
+```
+[DE-*]  Client ─VLESS Reality─▶ RuVDS ─wg0 (UDP :51820)─▶ Hetzner ─direct─▶ Internet
+                               │
+[RU]    Client ─VLESS Reality─▶ RuVDS ─direct (via routing_mark=100)─▶ Internet
+                               │  ↑
+                               │  └─ nftables NFQUEUE 100 ─▶ nfqws --dpi-desync=split (etap 3)
+                               │
+[RU-STLS] Client ─ShadowTLS v3─▶ RuVDS:8446 ─inner shadowsocks (loopback)─▶ Internet
+```
+
+- `[DE-*]` inbounds have `ExitOutbound=""` (default) — traffic terminates on RuVDS then egresses via WireGuard wg-tunnel to Hetzner (`route.final=wg-out`).
+- `[RU]`/`[RU-TCP]` inbounds have `ExitOutbound="direct"` — traffic egresses from RuVDS `eth0` with Russian IP. `direct` outbound has `routing_mark=100`; nftables `table inet zapret` matches marked TCP :80/443/8080/8443 and feeds it to `nfqws` for DPI desynchronization.
+- `[RU-STLS]` is ShadowTLS v3 wrapping inner shadowsocks — resistant to Reality-detection heuristics.
+
+**Two subscription endpoints** coexist for backward compatibility:
+- `/sub/:token` — Hetzner-facing (legacy links continue to work; `serverAddr` = `SERVER_IP` = Hetzner IP by default)
+- `/sub-ruvds/:token` — RuVDS-facing (new links; `serverAddr` = RuVDS IP, used when `WireGuardConfig.Enabled=true`)
+
+Legacy iptables DNAT/MASQUERADE in `service/portforward.go` / `portforward_nft.go` remains for external services (VK TURN etc.); the actual VPN traffic path uses sing-box + WireGuard.
+
+## Testing
+
+Unit tests in `service/vpn_test.go` cover config generation (routing, multiplex, shadowtls-group) and subscription link generation. `service/health/health_test.go` covers health monitoring. Run all with `go test ./... -v`.
+
+Manual verification remains critical for changes affecting sing-box behavior — after `POST /api/reload`, `journalctl -u sing-box -n 20` and `sing-box check -c /etc/sing-box/config.json` should be inspected. The `POST /api/reload` returns success even if sing-box rejects the config (SIGHUP is async).
 
 ## API Structure
 
@@ -83,7 +124,7 @@ Hetzner Cloud Firewall controls inbound access; RuVDS iptables — legacy DNAT (
 - Sing-box RuVDS: `/api/singbox/ruvds/{setup,reload,start,stop,status,config}` — управление зеркалом sing-box на RuVDS через SSH
 - Telemt RuVDS: `/api/telemt/ruvds/{setup,reload,start,stop,status}` — управление зеркалом MTProto на RuVDS через SSH
 
-Server listens on `:8085` (proxied via nginx).
+Server listens on `:8085` (proxied via Caddy on `myvpn-api.online:8443`).
 
 ## Language
 

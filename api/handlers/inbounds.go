@@ -207,14 +207,16 @@ func CreateInbound() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Tag is required"})
 			return
 		}
-		if input.Protocol != "vless" && input.Protocol != "hysteria2" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless' or 'hysteria2'"})
+		if input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', or 'shadowtls'"})
 			return
 		}
 
-		if err := validateInboundCombination(&input); err != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err})
-			return
+		if input.Protocol != "shadowtls" {
+			if err := validateInboundCombination(&input); err != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err})
+				return
+			}
 		}
 
 		// Check unique tag
@@ -301,14 +303,16 @@ func UpdateInbound() gin.HandlerFunc {
 
 		trimInboundStrings(&input)
 
-		if input.Protocol != "" && input.Protocol != "vless" && input.Protocol != "hysteria2" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless' or 'hysteria2'"})
+		if input.Protocol != "" && input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', or 'shadowtls'"})
 			return
 		}
 
-		if err := validateInboundCombination(&input); err != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err})
-			return
+		if input.Protocol != "shadowtls" && existing.Protocol != "shadowtls" {
+			if err := validateInboundCombination(&input); err != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err})
+				return
+			}
 		}
 
 		// Check unique tag if changed
