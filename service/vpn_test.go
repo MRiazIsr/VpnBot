@@ -190,3 +190,30 @@ func TestBuildSingBoxConfig_DirectExit_EndToEnd(t *testing.T) {
 		}
 	}
 }
+
+func TestMultiplexConfig_PaddingAndMaxStreams(t *testing.T) {
+	m := MultiplexConfig{Enabled: true, Padding: true, MaxStreams: 8}
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if !strings.Contains(got, `"padding":true`) {
+		t.Fatalf("expected padding, got %s", got)
+	}
+	if !strings.Contains(got, `"max_streams":8`) {
+		t.Fatalf("expected max_streams=8, got %s", got)
+	}
+}
+
+func TestMultiplexConfig_OmitsWhenZero(t *testing.T) {
+	m := MultiplexConfig{Enabled: true}
+	b, _ := json.Marshal(m)
+	got := string(b)
+	if strings.Contains(got, "padding") {
+		t.Fatalf("expected no padding for zero value, got %s", got)
+	}
+	if strings.Contains(got, "max_streams") {
+		t.Fatalf("expected no max_streams for zero value, got %s", got)
+	}
+}

@@ -85,7 +85,9 @@ type TransportConfig struct {
 }
 
 type MultiplexConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled    bool `json:"enabled"`
+	Padding    bool `json:"padding,omitempty"`
+	MaxStreams int  `json:"max_streams,omitempty"`
 }
 
 type Hysteria2User struct {
