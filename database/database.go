@@ -324,6 +324,24 @@ func Init(path string) {
 		for _, ib := range directExits {
 			DB.Create(&ib)
 		}
+
+		// ShadowTLS v3 direct-exit inbound — disabled до задания секретов через API.
+		shadowtlsSeed := InboundConfig{
+			Tag:               "RU-STLS",
+			DisplayName:       "RU-STLS",
+			Protocol:          "shadowtls",
+			ListenPort:        8446,
+			Enabled:           false,
+			IsBuiltin:         false,
+			SortOrder:         12,
+			ExitOutbound:      "direct",
+			ShadowTLSVersion:  3,
+			ShadowTLSPassword: "REPLACE_ME_VIA_API",
+			CoverDomain:       "gosuslugi.ru",
+			InnerMethod:       "2022-blake3-aes-128-gcm",
+			InnerPassword:     "REPLACE_ME_BASE64_16B",
+		}
+		DB.Create(&shadowtlsSeed)
 	}
 }
 
