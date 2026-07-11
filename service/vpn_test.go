@@ -154,3 +154,39 @@ func TestBuildSingBoxConfig_PerInboundRule(t *testing.T) {
 		t.Fatal("bogon block rule missing")
 	}
 }
+
+func TestBuildSingBoxConfig_DirectExit_EndToEnd(t *testing.T) {
+	users := []database.User{
+		{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"},
+	}
+	ib := database.InboundConfig{
+		Tag:               "vless-direct-xhttp",
+		Protocol:          "vless",
+		ListenPort:        2059,
+		TLSType:           "reality",
+		SNI:               "yastatic.net",
+		Transport:         "xhttp",
+		UserType:          "new",
+		Enabled:           true,
+		ExitOutbound:      "direct",
+		RealityPrivateKey: "priv",
+		RealityPublicKey:  "pub",
+		RealityShortIDs:   database.JSONStringArray{"abcd1234"},
+	}
+	cfg := buildSingBoxConfig([]database.InboundConfig{ib}, users, nil, "")
+
+	b, _ := json.Marshal(cfg)
+	got := string(b)
+	for _, expected := range []string{
+		`"tag":"vless-direct-xhttp"`,
+		`"listen_port":2059`,
+		`"server_name":"yastatic.net"`,
+		`"private_key":"priv"`,
+		`"inbound":["vless-direct-xhttp"]`,
+		`"outbound":"direct"`,
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("missing %q in generated config: %s", expected, got)
+		}
+	}
+}
