@@ -485,38 +485,33 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 	return ""
 }
 
-// generateShadowTLSLink returns a base64-encoded sing-box outbound bundle URL
-// for a ShadowTLS-v3 inbound (shadowtls-out wrapping inner shadowsocks-out).
-// Client (sing-box native) imports this as a full outbound bundle.
-func generateShadowTLSLink(ib database.InboundConfig, user database.User, serverAddr string) string {
-	payload := map[string]any{
-		"type":        "shadowtls",
-		"tag":         ib.Tag + "-out",
-		"server":      serverAddr,
-		"server_port": ib.ListenPort,
-		"version":     ib.ShadowTLSVersion,
-		"password":    ib.ShadowTLSPassword,
-		"tls": map[string]any{
-			"enabled":     true,
-			"server_name": ib.CoverDomain,
-			"utls": map[string]any{
-				"enabled":     true,
-				"fingerprint": "chrome",
-			},
-		},
-		"detour": "ss-inner-out",
+// generateShadowTLSLink returns a Shadowsocks SIP002 URI with the shadow-tls
+// plugin, which Hiddify / Nekoray / v2rayN / sing-box all parse.
+// Format:
+//
+//	ss://<b64url(method:inner_password)>@server:port/?plugin=shadow-tls%3Bversion%3D3%3Bhost%3D...%3Bpassword%3D...#tag
+func generateShadowTLSLink(ib database.InboundConfig, _ database.User, serverAddr string) string {
+	userInfo := ib.InnerMethod + ":" + ib.InnerPassword
+	b64 := base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(userInfo))
+
+	pluginOpts := fmt.Sprintf(
+		"shadow-tls;version=%d;host=%s;password=%s",
+		ib.ShadowTLSVersion,
+		ib.CoverDomain,
+		ib.ShadowTLSPassword,
+	)
+	q := url.Values{}
+	q.Set("plugin", pluginOpts)
+
+	u := url.URL{
+		Scheme:   "ss",
+		User:     url.User(b64),
+		Host:     fmt.Sprintf("%s:%d", serverAddr, ib.ListenPort),
+		Path:     "/",
+		RawQuery: q.Encode(),
+		Fragment: ib.Tag,
 	}
-	inner := map[string]any{
-		"type":     "shadowsocks",
-		"tag":      "ss-inner-out",
-		"method":   ib.InnerMethod,
-		"password": ib.InnerPassword,
-	}
-	bundle := map[string]any{
-		"outbounds": []any{payload, inner},
-	}
-	b, _ := json.Marshal(bundle)
-	return "sing-box://" + base64.StdEncoding.EncodeToString(b)
+	return u.String()
 }
 
 func ReloadService() error {

@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -318,25 +317,26 @@ func TestGenerateLinkForInbound_ShadowTLS(t *testing.T) {
 	}
 	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
 	link := GenerateLinkForInbound(ib, user, "194.87.80.237")
-	if !strings.HasPrefix(link, "sing-box://") {
-		t.Fatalf("expected sing-box://, got %q", link)
+	if !strings.HasPrefix(link, "ss://") {
+		t.Fatalf("expected ss:// URI, got %q", link)
 	}
-	payload := strings.TrimPrefix(link, "sing-box://")
-	data, err := base64.StdEncoding.DecodeString(payload)
-	if err != nil {
-		t.Fatalf("payload not base64: %v", err)
+	if !strings.Contains(link, "194.87.80.237:8446") {
+		t.Fatalf("expected server:port in host, got %s", link)
 	}
-	got := string(data)
-	if !strings.Contains(got, `"server":"194.87.80.237"`) {
-		t.Fatalf("expected server IP, got %s", got)
+	if !strings.Contains(link, "#ru-stls-v3") {
+		t.Fatalf("expected #tag fragment, got %s", link)
 	}
-	if !strings.Contains(got, `"password":"outer-pass"`) {
-		t.Fatalf("expected outer password, got %s", got)
+	// url.Values.Encode() URL-encodes plugin params (; -> %3B, = -> %3D).
+	if !strings.Contains(link, "plugin=shadow-tls") {
+		t.Fatalf("expected shadow-tls plugin, got %s", link)
 	}
-	if !strings.Contains(got, `"server_name":"gosuslugi.ru"`) {
-		t.Fatalf("expected cover domain in SNI, got %s", got)
+	if !strings.Contains(link, "version%3D3") {
+		t.Fatalf("expected version=3 URL-encoded, got %s", link)
 	}
-	if !strings.Contains(got, `"fingerprint":"chrome"`) {
-		t.Fatalf("expected chrome uTLS, got %s", got)
+	if !strings.Contains(link, "host%3Dgosuslugi.ru") {
+		t.Fatalf("expected host=gosuslugi.ru URL-encoded, got %s", link)
+	}
+	if !strings.Contains(link, "password%3Douter-pass") {
+		t.Fatalf("expected outer password URL-encoded, got %s", link)
 	}
 }
