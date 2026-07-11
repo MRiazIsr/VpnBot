@@ -231,7 +231,11 @@ func buildSingboxInbound(ib database.InboundConfig, users []database.User) Singb
 
 	// Multiplex
 	if ib.Multiplex {
-		sb.Multiplex = &MultiplexConfig{Enabled: true}
+		sb.Multiplex = &MultiplexConfig{
+			Enabled:    true,
+			Padding:    ib.MuxPadding,
+			MaxStreams: ib.MuxMaxStreams,
+		}
 	}
 
 	return sb

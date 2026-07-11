@@ -217,3 +217,28 @@ func TestMultiplexConfig_OmitsWhenZero(t *testing.T) {
 		t.Fatalf("expected no max_streams for zero value, got %s", got)
 	}
 }
+
+func TestBuildSingboxInbound_MuxPadding(t *testing.T) {
+	ib := database.InboundConfig{
+		Tag:           "vless-direct-xhttp",
+		Protocol:      "vless",
+		ListenPort:    2059,
+		TLSType:       "reality",
+		SNI:           "yastatic.net",
+		Transport:     "xhttp",
+		UserType:      "new",
+		Multiplex:     true,
+		MuxPadding:    true,
+		MuxMaxStreams: 8,
+	}
+	sb := buildSingboxInbound(ib, nil)
+	if sb.Multiplex == nil {
+		t.Fatal("expected non-nil Multiplex")
+	}
+	if !sb.Multiplex.Padding {
+		t.Fatal("expected padding=true")
+	}
+	if sb.Multiplex.MaxStreams != 8 {
+		t.Fatalf("expected max_streams=8, got %d", sb.Multiplex.MaxStreams)
+	}
+}

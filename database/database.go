@@ -134,7 +134,9 @@ type InboundConfig struct {
 	ServiceName string `json:"service_name"`
 	UserType    string `json:"user_type"` // "legacy" | "new" | "hy2"
 	Flow        string `json:"flow"`      // "xtls-rprx-vision" | ""
-	Multiplex   bool   `json:"multiplex"`
+	Multiplex     bool `json:"multiplex"`
+	MuxPadding    bool `json:"mux_padding"`
+	MuxMaxStreams int  `gorm:"default:0" json:"mux_max_streams"`
 	Enabled      bool   `gorm:"default:true" json:"enabled"`
 	IsBuiltin    bool   `gorm:"default:false" json:"is_builtin"`
 	SortOrder    int    `gorm:"default:0" json:"sort_order"`
