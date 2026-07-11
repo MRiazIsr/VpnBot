@@ -149,6 +149,13 @@ type InboundConfig struct {
 	RealityPublicKey  string          `json:"reality_public_key"`
 	RealityShortIDs   JSONStringArray `json:"reality_short_ids" gorm:"type:text"`
 	Fingerprint       string          `json:"fingerprint"`
+
+	// ShadowTLS fields (Protocol="shadowtls")
+	ShadowTLSPassword string `json:"shadowtls_password"`
+	ShadowTLSVersion  int    `gorm:"default:0" json:"shadowtls_version"`
+	CoverDomain       string `json:"cover_domain"`
+	InnerMethod       string `json:"inner_method"`
+	InnerPassword     string `json:"inner_password"`
 }
 
 // --- Init ---
