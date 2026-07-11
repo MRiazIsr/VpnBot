@@ -280,7 +280,9 @@ func Init(path string) {
 				Transport:         "xhttp",
 				UserType:          "new",
 				Flow:              "",
-				Multiplex:         false,
+				Multiplex:         true,
+				MuxPadding:        true,
+				MuxMaxStreams:     8,
 				Enabled:           false, // отключены до заполнения ключей
 				IsBuiltin:         false,
 				SortOrder:         10,
@@ -288,7 +290,7 @@ func Init(path string) {
 				RealityPrivateKey: "REPLACE_ME_VIA_API",
 				RealityPublicKey:  "REPLACE_ME_VIA_API",
 				RealityShortIDs:   JSONStringArray{"REPLACE_ME"},
-				Fingerprint:       "random",
+				Fingerprint:       "chrome",
 			},
 			{
 				Tag:               "vless-direct-tcp",
@@ -308,7 +310,7 @@ func Init(path string) {
 				RealityPrivateKey: "REPLACE_ME_VIA_API",
 				RealityPublicKey:  "REPLACE_ME_VIA_API",
 				RealityShortIDs:   JSONStringArray{"REPLACE_ME"},
-				Fingerprint:       "random",
+				Fingerprint:       "chrome",
 			},
 		}
 		for _, ib := range directExits {
