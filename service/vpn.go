@@ -30,7 +30,7 @@ type SingBoxConfig struct {
 	Log          LogConfig           `json:"log"`
 	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
 	Inbounds     []SingboxInbound    `json:"inbounds"`
-	Outbounds    []OutboundConfig    `json:"outbounds"`
+	Outbounds    []any               `json:"outbounds"`
 	Route        *RouteConfig        `json:"route,omitempty"`
 }
 
@@ -285,9 +285,9 @@ func GenerateAndReload() error {
 			},
 		},
 		Inbounds: singboxInbounds,
-		Outbounds: []OutboundConfig{
-			{Type: "direct", Tag: "direct"},
-			{Type: "block", Tag: "block"},
+		Outbounds: []any{
+			OutboundConfig{Type: "direct", Tag: "direct"},
+			OutboundConfig{Type: "block", Tag: "block"},
 		},
 		Route: &RouteConfig{
 			Rules: []RouteRule{

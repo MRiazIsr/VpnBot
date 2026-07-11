@@ -74,3 +74,23 @@ func TestLoadExtraOutbound_MissingFileIsError(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 }
+
+func TestSingBoxConfig_OutboundsMixedTypes(t *testing.T) {
+	cfg := SingBoxConfig{
+		Outbounds: []any{
+			map[string]any{"type": "wireguard", "tag": "wg-out", "server": "1.2.3.4"},
+			OutboundConfig{Type: "direct", Tag: "direct"},
+		},
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if !strings.Contains(got, `"tag":"wg-out"`) {
+		t.Fatalf("expected wg-out, got %s", got)
+	}
+	if !strings.Contains(got, `"tag":"direct"`) {
+		t.Fatalf("expected direct, got %s", got)
+	}
+}
