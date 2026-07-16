@@ -4,7 +4,7 @@
 
 **Goal:** Install an isolated Smart SYN limiter for `87.247.157.120:443` on RuVDS so the affected Android/MegaFon client can retry MTProxy handshakes without changing the primary MTProxy or VPN.
 
-**Architecture:** Add one dedicated nftables table on RuVDS that sees the public destination before the existing redirect to telemt, meters new TCP SYN packets per IPv4 source at `54/minute burst 1`, and immediately rejects excess SYNs. A oneshot systemd unit owns only this table, making persistence and rollback independent from telemt and the current firewall.
+**Architecture:** Add one dedicated nftables table on RuVDS in the input hook after the existing redirect to the dedicated telemt listener. Match the conntrack original destination `87.247.157.120:443` plus the translated port `29444`, meter new TCP SYN packets per IPv4 source at `54/minute burst 1`, and immediately reject excess SYNs. A oneshot systemd unit owns only this table, making persistence and rollback independent from telemt and the current firewall.
 
 **Tech Stack:** nftables, systemd, OpenSSH, telemt 3.4.24
 
@@ -22,35 +22,38 @@
 
 **Files:**
 - Inspect: `/etc/telemt/telemt.toml` on RuVDS
-- Create: `/root/mtproxy-smart-syn-backup-<timestamp>/telemt.toml`
-- Create: `/root/mtproxy-smart-syn-backup-<timestamp>/nftables.nft`
+- Inspect: `/etc/telemt-sch42/telemt.toml` on RuVDS
+- Create: `/root/mtproxy-smart-syn-backup-20260716-191227/telemt.toml`
+- Create: `/root/mtproxy-smart-syn-backup-20260716-191227/telemt-sch42.toml`
+- Create: `/root/mtproxy-smart-syn-backup-20260716-191227/nftables.nft`
 
-- [ ] **Step 1: Inspect the live address, telemt listener, service state, and complete nftables ruleset**
+- [x] **Step 1: Inspect the live address, telemt listener, service state, and complete nftables ruleset**
 
 Run over SSH with `~/.ssh/russian-vps`:
 
 ```bash
 ip -4 address show
-systemctl is-active telemt
+systemctl is-active telemt-sch42-direct
 ss -lntp
-sed -n '1,220p' /etc/telemt/telemt.toml
+awk '/^\[access.users\]$/ { print; print "[REDACTED]"; exit } { print }' /etc/telemt-sch42/telemt.toml
 nft -a list ruleset
 ```
 
-Expected: `87.247.157.120` is local, telemt is active on `9443`, and an existing rule maps public TCP `443` to the telemt listener.
+Expected: `87.247.157.120` is local, `telemt-sch42-direct` is active on `29444`, and an existing rule redirects public TCP `443` to that dedicated listener.
 
-- [ ] **Step 2: Save timestamped backups before mutation**
+- [x] **Step 2: Save timestamped backups before mutation**
 
 ```bash
 stamp=$(date +%Y%m%d-%H%M%S)
 backup=/root/mtproxy-smart-syn-backup-$stamp
 install -d -m 700 "$backup"
 install -m 600 /etc/telemt/telemt.toml "$backup/telemt.toml"
+install -m 600 /etc/telemt-sch42/telemt.toml "$backup/telemt-sch42.toml"
 nft list ruleset > "$backup/nftables.nft"
 printf '%s\n' "$backup"
 ```
 
-Expected: one printed backup directory containing both files.
+Expected: one printed backup directory containing both telemt configs and the nftables ruleset.
 
 ### Task 2: Install the isolated Smart SYN rule
 
@@ -58,20 +61,20 @@ Expected: one printed backup directory containing both files.
 - Create: `/usr/local/sbin/mtproxy-smart-syn-alt`
 - Create: `/etc/systemd/system/mtproxy-smart-syn-alt.service`
 
-- [ ] **Step 1: Build the nftables owner script locally and validate its syntax**
+- [x] **Step 1: Build the nftables owner script locally and validate its syntax**
 
 The script must:
 
 1. delete only `table inet mtproxy_smart_syn_alt` if it already exists;
-2. create a base chain at a prerouting priority that runs immediately before the live port-redirect chain;
-3. match only IPv4 destination `87.247.157.120`, TCP destination `443`, and initial SYN packets;
+2. create a base chain in the input hook, where `reject` is supported by the server's nftables 0.9.3/kernel combination;
+3. match only initial SYN packets whose conntrack original destination is `87.247.157.120:443` and whose translated destination port is `29444`;
 4. meter packets per `ip saddr` at `54/minute burst 1 packets`, with a 60-second timeout;
 5. count allowed packets and reject only over-limit matching SYNs with `icmp type host-unreachable`;
 6. support `start` and `stop` actions for deterministic rollback.
 
 Validate the generated ruleset with `nft --check` on RuVDS before activating it.
 
-- [ ] **Step 2: Install the owner script and systemd unit without touching existing firewall files**
+- [x] **Step 2: Install the owner script and systemd unit without touching existing firewall files**
 
 Copy both files to RuVDS, install them with root ownership, then run:
 
@@ -82,23 +85,23 @@ systemctl enable --now mtproxy-smart-syn-alt.service
 
 Expected: the unit exits successfully and remains `active (exited)`.
 
-- [ ] **Step 3: Confirm the rule scope and packet path**
+- [x] **Step 3: Confirm the rule scope and packet path**
 
 ```bash
 systemctl status --no-pager mtproxy-smart-syn-alt.service
 nft -a list table inet mtproxy_smart_syn_alt
-systemctl is-active telemt
+systemctl is-active telemt-sch42-direct
 ss -lntp
 ```
 
-Expected: only the alternative public IP/port appears in the new table; telemt stays active and still listens on `9443`.
+Expected: only the alternative original destination and dedicated translated port appear in the new table; `telemt-sch42-direct` stays active and still listens on `29444`.
 
 ### Task 3: Verify reachability and prepare the user test
 
 **Files:**
 - Inspect: `/var/log` or journald entries for telemt
 
-- [ ] **Step 1: Check TCP reachability from outside RuVDS**
+- [x] **Step 1: Check TCP reachability from outside RuVDS**
 
 ```bash
 nc -vz -w 5 87.247.157.120 443
@@ -106,11 +109,11 @@ nc -vz -w 5 87.247.157.120 443
 
 Expected: TCP connection succeeds.
 
-- [ ] **Step 2: Capture baseline counters and recent telemt state**
+- [x] **Step 2: Capture baseline counters and recent telemt state**
 
 ```bash
 nft list table inet mtproxy_smart_syn_alt
-journalctl -u telemt --since '5 minutes ago' --no-pager
+journalctl -u telemt-sch42-direct --since '5 minutes ago' --no-pager
 ```
 
 Expected: counters are visible and no service crash/restart occurred.
@@ -125,7 +128,7 @@ Use the existing alternative link. After the attempt, compare the allow/reject c
 - Remove on rollback: `/etc/systemd/system/mtproxy-smart-syn-alt.service`
 - Remove on rollback: `/usr/local/sbin/mtproxy-smart-syn-alt`
 
-- [ ] **Step 1: Record the rollback command sequence**
+- [x] **Step 1: Record the rollback command sequence**
 
 ```bash
 systemctl disable --now mtproxy-smart-syn-alt.service
@@ -135,4 +138,4 @@ rm -f /usr/local/sbin/mtproxy-smart-syn-alt
 systemctl daemon-reload
 ```
 
-Expected: `nft list table inet mtproxy_smart_syn_alt` reports that the table does not exist, while telemt and the original public redirect remain unchanged.
+Expected: `nft list table inet mtproxy_smart_syn_alt` reports that the table does not exist, while `telemt-sch42-direct` and the original public redirect remain unchanged.
