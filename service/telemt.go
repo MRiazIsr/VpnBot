@@ -139,6 +139,14 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 
 	sb.WriteString("[censorship]\n")
 	sb.WriteString(fmt.Sprintf("tls_domain = \"%s\"\n", tlsDomain))
+	// unknown_sni_action=mask: на чужой/пустой SNI telemt прозрачно проксирует
+	// хендшейк на tls_domain:443, поэтому эндпоинт байт-в-байт повторяет поведение
+	// настоящего домена (matching SNI → его cert; чужой SNI → его же TLS-alert
+	// unrecognized_name), а не выдаёт себя «чистым» TCP-EOF (дефолт telemt = Drop).
+	// Проверено 26.07.2026: main:9443 и реальный lk.rt.ru на SNI=example.com дают
+	// идентичный alert 112 (read 7 / written 1542 байт). Форвард-фейл на
+	// egress-заблокированном хосте НЕ фатален (per-connection), безопасно для RuVDS.
+	sb.WriteString("unknown_sni_action = \"mask\"\n")
 	// mask/tls_emulation/tls_front_dir НЕ включаем сразу: tls_emulation требует
 	// fetch'а реального сертификата с tls_domain, что на RuVDS через РКН-uplink
 	// может блокироваться/таймаутить — это вгоняло сервис в restart loop с
