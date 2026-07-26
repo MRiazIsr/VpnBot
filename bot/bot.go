@@ -44,6 +44,9 @@ func Start(token string, adminID int64) {
 	// Сохраняем экземпляр бота в глобальную переменную
 	Bot = b
 
+	registerHealthHandlers(b)
+	go runHealthAlarm(b)
+
 	// --- Menus ---
 
 	// Главное меню
