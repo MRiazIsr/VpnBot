@@ -12,10 +12,11 @@ import (
 
 // TelemtPinnedVersion — версия, на которую UpgradeTelemtRuVDS обновляет бинарник.
 // Пиним явно вместо releases/latest: issue telemt/telemt#628 показал, что
-// после обновления 3.3.22 → 3.3.35 пришлось откатываться. 3.4.11 (10 мая 2026)
-// — текущая стабильная с фиксами по TLS-fronting и quota persistence.
-// Внимание: тег без префикса "v" — релизы лежат под "3.4.11", не "v3.4.11".
-const TelemtPinnedVersion = "3.4.11"
+// после обновления 3.3.22 → 3.3.35 пришлось откатываться. 3.4.25 (20 июля 2026)
+// — текущая: боевой telemt на Hetzner работает на ней с 26.07.2026 (добавляет
+// handshake failure stage accounting), заменила 3.4.11.
+// Внимание: тег без префикса "v" — релизы лежат под "3.4.25", не "v3.4.25".
+const TelemtPinnedVersion = "3.4.25"
 
 // InstallTelemtRuVDS — скачивает и устанавливает telemt на RuVDS.
 // Идемпотентна.
