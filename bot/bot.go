@@ -756,7 +756,13 @@ func getTelemetLink(c tele.Context) (string, error) {
 		tlsDomain = "dl.google.com"
 	}
 
-	link := service.GenerateTelemetProxyLink(serverAddr, cfg.Port, tu.Secret, tlsDomain)
+	// Порт в ссылке может отличаться от порта прослушивания: см. TelemetConfig.LinkPort.
+	linkPort := cfg.LinkPort
+	if linkPort == 0 {
+		linkPort = cfg.Port
+	}
+
+	link := service.GenerateTelemetProxyLink(serverAddr, linkPort, tu.Secret, tlsDomain)
 	return link, nil
 }
 

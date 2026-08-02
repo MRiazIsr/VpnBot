@@ -76,11 +76,22 @@ type TelemetConfig struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	Enabled       bool   `gorm:"default:false" json:"enabled"`
-	Port          int    `gorm:"default:9443" json:"port"`
+	Enabled bool `gorm:"default:false" json:"enabled"`
+	// Port — порт, который telemt реально слушает на Hetzner.
+	Port int `gorm:"default:9443" json:"port"`
+	// LinkPort — порт, который попадает в ссылку tg://proxy. Ноль = брать Port.
+	//
+	// Разведено с Port намеренно. На RuVDS перед telemt стоит nginx с
+	// ssl_preread: он принимает :443 и по SNI lk.rt.ru отправляет соединение
+	// в тот же туннель, что и :9443. Секрет и tls_domain одни и те же, поэтому
+	// оба входа равнозначны — но 443 куда охотнее пропускают мобильные
+	// операторы, чем нестандартный 9443. Раньше поле было одно, и попытка
+	// выдать пользователям 443 заставила бы telemt занять 443 на Hetzner,
+	// где уже сидит sing-box.
+	LinkPort      int    `gorm:"default:0" json:"link_port"`
 	TLSDomain     string `json:"tls_domain"`
-	ServerAddress string `json:"server_address"` // IP/домен для ссылок. Пусто = SERVER_IP
-	ProxyTag      string `json:"proxy_tag"`      // proxy tag от @MTProxyBot (32 hex chars)
+	ServerAddress string `json:"server_address"`                     // IP/домен для ссылок. Пусто = SERVER_IP
+	ProxyTag      string `json:"proxy_tag"`                          // proxy tag от @MTProxyBot (32 hex chars)
 	RuVDSEnabled  bool   `gorm:"default:false" json:"ruvds_enabled"` // Запустить telemt на RuVDS через SSH
 }
 
@@ -157,25 +168,25 @@ type InboundConfig struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	Tag         string `gorm:"uniqueIndex;not null" json:"tag"`
-	DisplayName string `json:"display_name"`
-	Protocol    string `json:"protocol"`    // "vless" | "hysteria2"
-	ListenPort  int    `json:"listen_port"`
-	TLSType     string `json:"tls_type"`    // "reality" | "certificate"
-	SNI         string `json:"sni"`
-	CertPath    string `json:"cert_path"`
-	KeyPath     string `json:"key_path"`
-	Transport   string `json:"transport"`    // "" (tcp) | "http" | "grpc"
-	ServiceName string `json:"service_name"`
-	UserType    string `json:"user_type"` // "legacy" | "new" | "hy2"
-	Flow        string `json:"flow"`      // "xtls-rprx-vision" | ""
-	Multiplex     bool `json:"multiplex"`
-	MuxPadding    bool `json:"mux_padding"`
-	MuxMaxStreams int  `gorm:"default:0" json:"mux_max_streams"`
-	Enabled      bool   `gorm:"default:true" json:"enabled"`
-	IsBuiltin    bool   `gorm:"default:false" json:"is_builtin"`
-	SortOrder    int    `gorm:"default:0" json:"sort_order"`
-	ExitOutbound string `json:"exit_outbound"` // "" (=route.final) | "direct" | "wg-out"
+	Tag           string `gorm:"uniqueIndex;not null" json:"tag"`
+	DisplayName   string `json:"display_name"`
+	Protocol      string `json:"protocol"` // "vless" | "hysteria2"
+	ListenPort    int    `json:"listen_port"`
+	TLSType       string `json:"tls_type"` // "reality" | "certificate"
+	SNI           string `json:"sni"`
+	CertPath      string `json:"cert_path"`
+	KeyPath       string `json:"key_path"`
+	Transport     string `json:"transport"` // "" (tcp) | "http" | "grpc"
+	ServiceName   string `json:"service_name"`
+	UserType      string `json:"user_type"` // "legacy" | "new" | "hy2"
+	Flow          string `json:"flow"`      // "xtls-rprx-vision" | ""
+	Multiplex     bool   `json:"multiplex"`
+	MuxPadding    bool   `json:"mux_padding"`
+	MuxMaxStreams int    `gorm:"default:0" json:"mux_max_streams"`
+	Enabled       bool   `gorm:"default:true" json:"enabled"`
+	IsBuiltin     bool   `gorm:"default:false" json:"is_builtin"`
+	SortOrder     int    `gorm:"default:0" json:"sort_order"`
+	ExitOutbound  string `json:"exit_outbound"` // "" (=route.final) | "direct" | "wg-out"
 
 	ServerAddress string `json:"server_address"` // Адрес для ссылок (домен или IP). Пусто = SERVER_IP
 
@@ -316,17 +327,17 @@ func Init(path string) {
 		// Direct-exit inbounds (RuVDS выход) — не builtin, placeholder Reality keys.
 		directExits := []InboundConfig{
 			{
-				Tag:               "vless-direct-xhttp",
-				DisplayName:       "VLESS Direct-Exit (xhttp)",
-				Protocol:          "vless",
-				ListenPort:        2059,
-				TLSType:           "reality",
-				SNI:               "yastatic.net",
-				Transport:         "xhttp",
-				UserType:          "new",
-				Flow:              "",
-				Multiplex:         true,
-				MuxPadding:        true,
+				Tag:         "vless-direct-xhttp",
+				DisplayName: "VLESS Direct-Exit (xhttp)",
+				Protocol:    "vless",
+				ListenPort:  2059,
+				TLSType:     "reality",
+				SNI:         "yastatic.net",
+				Transport:   "xhttp",
+				UserType:    "new",
+				Flow:        "",
+				Multiplex:   true,
+				MuxPadding:  true,
 				// MuxMaxStreams is intentionally 0 — sing-box rejects max_streams
 				// on VLESS inbound side (it's only valid on outbound/client-side mux).
 				Enabled:           false, // отключены до заполнения ключей
