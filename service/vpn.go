@@ -134,6 +134,11 @@ type OutboundConfig struct {
 	PrivateKey    string   `json:"private_key,omitempty"`
 	PeerPublicKey string   `json:"peer_public_key,omitempty"`
 	MTU           int      `json:"mtu,omitempty"`
+	// DomainStrategy — как резолвить имена перед подключением.
+	// На RuVDS обязателен "prefer_ipv4": глобального IPv6 у машины нет,
+	// и без этого sing-box берёт AAAA, уходит по IPv6 и соединение молча
+	// умирает. Проверено 02.08.2026: RU-профили падали именно так.
+	DomainStrategy string `json:"domain_strategy,omitempty"`
 }
 
 // --- Logic ---
@@ -474,7 +479,7 @@ func GenerateRuVDSConfig() ([]byte, error) {
 		Inbounds: singboxInbounds,
 		Outbounds: []any{
 			wgOutbound,
-			OutboundConfig{Type: "direct", Tag: "direct"},
+			OutboundConfig{Type: "direct", Tag: "direct", DomainStrategy: "prefer_ipv4"},
 			OutboundConfig{Type: "block", Tag: "block"},
 		},
 		Route: &RouteConfig{
