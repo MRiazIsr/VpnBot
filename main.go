@@ -35,9 +35,11 @@ func main() {
 		log.Println("Error setting up WireGuard:", err)
 	}
 
-	// Установка sing-box на RuVDS (если WG включён)
-	if err := service.SetupSingboxRuVDS(); err != nil {
-		log.Println("Error setting up sing-box on RuVDS:", err)
+	// Состояние sing-box на RuVDS — только чтение. Разворачивать и
+	// перезапускать его на старте демона нельзя: см. BootstrapSingboxRuVDS.
+	// Полная установка — явным POST /api/singbox/ruvds/setup.
+	if err := service.BootstrapSingboxRuVDS(); err != nil {
+		log.Println("Error checking sing-box on RuVDS:", err)
 	}
 
 	// Установка telemt на RuVDS (если TelemetConfig.RuVDSEnabled)

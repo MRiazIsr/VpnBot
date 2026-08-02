@@ -242,7 +242,51 @@ func RestoreRuVDSDNAT() error {
 	return firstErr
 }
 
+// BootstrapSingboxRuVDS — то, что разрешено делать при старте vpnbot.
+//
+// А именно: ничего не менять. Только посмотреть и записать в лог.
+//
+// Раньше main.go звал SetupSingboxRuVDS(), и тот при каждом запуске
+// перезаписывал config.json на RuVDS, делал systemctl start и enable.
+// 29.07.2026 это и произошло: sing-box на RuVDS, который по действующей
+// схеме должен был стоять остановленным, оказался запущен и добавлен в
+// автозапуск — с конфигом, где route.final указывал на туннель, ни разу
+// не передавший ни одного пакета. Пока DNAT перехватывал порты раньше
+// локального сокета, подмена ничего не ломала и оставалась незамеченной.
+//
+// Запуск процесса на чужой машине — это осознанное действие оператора,
+// а не побочный эффект перезапуска демона. Поэтому всё изменяющее живёт
+// в SetupSingboxRuVDS() и вызывается явно через POST /api/singbox/ruvds/setup.
+func BootstrapSingboxRuVDS() error {
+	if !IsRuVDSEnabled() {
+		log.Println("sing-box RuVDS: WG не включён, пропускаем")
+		return nil
+	}
+	if !IsPortForwardConfigured() {
+		log.Println("sing-box RuVDS: RUVDS_IP не задан, пропускаем")
+		return nil
+	}
+
+	client, err := sshConnect()
+	if err != nil {
+		log.Printf("sing-box RuVDS: недоступен по SSH (%v) — управление выключено", err)
+		return nil
+	}
+	defer client.Close()
+
+	state, _ := runSSH(client, fmt.Sprintf("systemctl is-active %s 2>/dev/null; true",
+		SingboxRuVDSServiceName))
+	ver, _ := runSSH(client, fmt.Sprintf("%s version 2>/dev/null | head -1; true",
+		SingboxRuVDSBinaryPath))
+	log.Printf("sing-box RuVDS: состояние=%s, %s (изменений не вносим)",
+		strings.TrimSpace(state), strings.TrimSpace(ver))
+	return nil
+}
+
 // SetupSingboxRuVDS — полный цикл установки sing-box на RuVDS.
+//
+// ВНИМАНИЕ: изменяет состояние чужой машины — переписывает config.json,
+// открывает порты, запускает и включает сервис. Вызывать только явно.
 func SetupSingboxRuVDS() error {
 	if !IsRuVDSEnabled() {
 		log.Println("sing-box RuVDS: WG не включён, пропускаем")

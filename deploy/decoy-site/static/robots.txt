@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://moskva.live/sitemap.xml
