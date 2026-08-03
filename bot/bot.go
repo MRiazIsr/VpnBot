@@ -278,16 +278,28 @@ func Start(token string, adminID int64) {
 			return c.Send(err.Error())
 		}
 
-		msg := "📡 Основная ссылка:\n\n" + links.FakeTLS
-		if links.Secure != "" || links.Classic != "" {
-			msg += "\n\nЕсли основная не подключается — попробуйте запасные, " +
-				"они ходят другим способом. Аккаунт и лимиты те же."
+		// Порядок не косметический: первой идёт та, что реально проходит у
+		// мобильных операторов. Прежняя основная остаётся ниже — у части
+		// пользователей она работает, и ломать им ничего не нужно.
+		primary, rest := links.FakeTLS, []string{}
+		if links.OwnCert != "" {
+			primary = links.OwnCert
+			rest = append(rest, links.FakeTLS)
 		}
-		if links.Secure != "" {
-			msg += "\n\n📡 Запасная 1:\n\n" + links.Secure
-		}
-		if links.Classic != "" {
-			msg += "\n\n📡 Запасная 2:\n\n" + links.Classic
+		rest = append(rest, links.Secure, links.Classic)
+
+		msg := "📡 Основная ссылка:\n\n" + primary
+		n := 0
+		for _, link := range rest {
+			if link == "" {
+				continue
+			}
+			if n == 0 {
+				msg += "\n\nЕсли основная не подключается — попробуйте запасные, " +
+					"они ходят другим способом. Аккаунт и лимиты те же."
+			}
+			n++
+			msg += fmt.Sprintf("\n\n📡 Запасная %d:\n\n%s", n, link)
 		}
 		return c.Send(msg)
 	})
@@ -734,7 +746,11 @@ func buildSubURL(token string) string {
 // Секрет у всех трёх общий, отличается только префикс, поэтому дополнительные
 // режимы ничего не стоят пользователю: та же учётка, другой способ маскировки.
 type telemetLinks struct {
-	FakeTLS string // ee<secret><домен> — основной, притворяется HTTPS к tls_domain
+	// OwnCert — FakeTLS под нашим собственным именем и сертификатом.
+	// Идёт первым: на мобильных операторах он единственный уверенно проходит,
+	// потому что не подделывает чужой домен. Пусто если второй инстанс выключен.
+	OwnCert string
+	FakeTLS string // ee<secret><домен> — старый вход, эмулирует чужой домен
 	Secure  string // dd<secret> — обфускация без TLS, пусто если режим выключен
 	Classic string // <secret> — голый MTProto, пусто если режим выключен
 }
@@ -800,6 +816,11 @@ func getTelemetLinks(c tele.Context) (telemetLinks, error) {
 	}
 
 	out.FakeTLS = service.GenerateTelemetProxyLink(serverAddr, linkPort, tu.Secret, tlsDomain)
+	if cfg.AltTLSDomain != "" {
+		// Тот же адрес и порт, что у основной — отличается только имя в SNI,
+		// а значит и сертификат, которым мы отвечаем.
+		out.OwnCert = service.GenerateTelemetProxyLink(serverAddr, linkPort, tu.Secret, cfg.AltTLSDomain)
+	}
 	if cfg.SecureEnabled {
 		out.Secure = service.GenerateTelemetSecureLink(serverAddr, altPort, tu.Secret)
 	}

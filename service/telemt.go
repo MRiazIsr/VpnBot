@@ -19,6 +19,14 @@ const (
 	TelemetConfigPath  = "/etc/telemt/telemt.toml"
 	TelemetServicePath = "/etc/systemd/system/telemt.service"
 	TelemetWorkDir     = "/opt/telemt"
+
+	// Второй инстанс: то же самое, но под нашим собственным именем FakeTLS.
+	// Юнит и туннель к нему заводятся отдельно (см. TelemetConfig.AltTLSDomain),
+	// vpnbot держит в актуальном состоянии только конфиг — иначе новые
+	// пользователи попадали бы в боевой список, но не во второй.
+	TelemetAltConfigDir  = "/etc/telemt-alt"
+	TelemetAltConfigPath = "/etc/telemt-alt/telemt.toml"
+	TelemetAltService    = "telemt-alt"
 )
 
 // GenerateSecret генерирует 16 случайных байт → 32-hex строку
@@ -105,12 +113,18 @@ func InstallTelemt() error {
 	return nil
 }
 
-// BuildTelemetConfigTOML строит TOML-конфиг telemt в виде байтов (без записи в файл).
-// Используется обоими хостами: локальная запись на Hetzner и SSH-деплой на RuVDS.
-func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
-	var telemetUsers []database.TelemetUser
-	database.DB.Where("telemet_config_id = ?", cfg.ID).Find(&telemetUsers)
+// telemtVariant описывает, чем дополнительный инстанс telemt отличается от боевого.
+// Всё остальное — режимы, пользователи, поведение на чужой SNI — у них общее.
+type telemtVariant struct {
+	Port       int    // порт прослушивания
+	TLSDomain  string // имя FakeTLS
+	ListenIP   string // "0.0.0.0" для боевого, "127.0.0.1" для второго (он за туннелем)
+	APIEnabled bool   // у второго выключен: 9091 уже занят боевым
+	ClassicOK  bool   // classic/secure живут только на боевом входе 9443
+	SecureOK   bool
+}
 
+func mainVariant(cfg database.TelemetConfig) telemtVariant {
 	port := cfg.Port
 	if port == 0 {
 		port = 9443
@@ -119,6 +133,35 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 	if tlsDomain == "" {
 		tlsDomain = "lk.rt.ru"
 	}
+	return telemtVariant{
+		Port: port, TLSDomain: tlsDomain, ListenIP: "0.0.0.0",
+		APIEnabled: true, ClassicOK: cfg.ClassicEnabled, SecureOK: cfg.SecureEnabled,
+	}
+}
+
+func altVariant(cfg database.TelemetConfig) telemtVariant {
+	port := cfg.AltInstancePort
+	if port == 0 {
+		port = 19443
+	}
+	return telemtVariant{
+		Port: port, TLSDomain: cfg.AltTLSDomain, ListenIP: "127.0.0.1",
+		APIEnabled: false, ClassicOK: false, SecureOK: false,
+	}
+}
+
+// BuildTelemetConfigTOML строит TOML-конфиг боевого telemt в виде байтов.
+// Используется обоими хостами: локальная запись на Hetzner и SSH-деплой на RuVDS.
+func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
+	return buildTelemtConfigTOMLFor(cfg, mainVariant(cfg))
+}
+
+func buildTelemtConfigTOMLFor(cfg database.TelemetConfig, v telemtVariant) []byte {
+	var telemetUsers []database.TelemetUser
+	database.DB.Where("telemet_config_id = ?", cfg.ID).Find(&telemetUsers)
+
+	port := v.Port
+	tlsDomain := v.TLSDomain
 
 	var sb strings.Builder
 
@@ -132,8 +175,8 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 	sb.WriteString("\n")
 
 	sb.WriteString("[general.modes]\n")
-	sb.WriteString(fmt.Sprintf("classic = %t\n", cfg.ClassicEnabled))
-	sb.WriteString(fmt.Sprintf("secure = %t\n", cfg.SecureEnabled))
+	sb.WriteString(fmt.Sprintf("classic = %t\n", v.ClassicOK))
+	sb.WriteString(fmt.Sprintf("secure = %t\n", v.SecureOK))
 	sb.WriteString("tls = true\n")
 	sb.WriteString("\n")
 
@@ -142,13 +185,13 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 	sb.WriteString("\n")
 
 	sb.WriteString("[server.api]\n")
-	sb.WriteString("enabled = true\n")
+	sb.WriteString(fmt.Sprintf("enabled = %t\n", v.APIEnabled))
 	sb.WriteString("\n")
 
 	// telemt 3.4.x требует хотя бы один listener-блок, иначе старт падает
 	// с "No listeners. Exiting." (формат конфига изменился относительно 3.3.x).
 	sb.WriteString("[[server.listeners]]\n")
-	sb.WriteString("ip = \"0.0.0.0\"\n")
+	sb.WriteString(fmt.Sprintf("ip = \"%s\"\n", v.ListenIP))
 	sb.WriteString("\n")
 
 	sb.WriteString("[censorship]\n")
@@ -182,17 +225,44 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 // при старте, а лишний рестарт рвёт живые сессии пользователей.
 func GenerateTelemetConfig(cfg database.TelemetConfig) (bool, error) {
 	os.MkdirAll(TelemetConfigDir, 0755)
+	changed, err := writeTelemtConfigIfChanged(TelemetConfigPath, BuildTelemetConfigTOML(cfg))
+	if err != nil {
+		return false, err
+	}
 
-	next := BuildTelemetConfigTOML(cfg)
-	prev, err := os.ReadFile(TelemetConfigPath)
+	// Второй инстанс держим в синхроне здесь же: у него собственный конфиг, но
+	// тот же список пользователей из БД. Если его не переписывать, новичок
+	// получит ссылку на имя, которого в его конфиге нет, и не подключится.
+	if cfg.AltTLSDomain != "" {
+		os.MkdirAll(TelemetAltConfigDir, 0755)
+		altChanged, err := writeTelemtConfigIfChanged(
+			TelemetAltConfigPath, buildTelemtConfigTOMLFor(cfg, altVariant(cfg)))
+		if err != nil {
+			log.Println("Ошибка записи конфига второго telemt:", err)
+		} else if altChanged {
+			log.Println("Конфиг второго telemt изменился, перезапускаю", TelemetAltService)
+			if err := exec.Command("systemctl", "restart", TelemetAltService).Run(); err != nil {
+				log.Println("Ошибка перезапуска", TelemetAltService+":", err)
+			}
+		}
+	}
+
+	return changed, nil
+}
+
+// writeTelemtConfigIfChanged пишет конфиг и сообщает, отличался ли он от прежнего.
+// Признак нужен вызывающему: telemt перечитывает конфиг только при старте, а
+// лишний рестарт рвёт живые сессии.
+func writeTelemtConfigIfChanged(path string, next []byte) (bool, error) {
+	prev, err := os.ReadFile(path)
 	changed := err != nil || !bytes.Equal(prev, next)
 
-	if err := os.WriteFile(TelemetConfigPath, next, 0644); err != nil {
+	if err := os.WriteFile(path, next, 0644); err != nil {
 		log.Println("Ошибка записи конфига telemt:", err)
 		return false, err
 	}
 	if changed {
-		log.Println("Конфиг telemt изменился, записан:", TelemetConfigPath)
+		log.Println("Конфиг telemt изменился, записан:", path)
 	}
 	return changed, nil
 }
