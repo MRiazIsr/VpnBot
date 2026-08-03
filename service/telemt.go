@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -176,14 +177,24 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 }
 
 // GenerateTelemetConfig пишет TOML-конфиг telemt локально на Hetzner.
-func GenerateTelemetConfig(cfg database.TelemetConfig) error {
+// Возвращает changed=true, если содержимое отличается от того, что уже на диске —
+// по нему вызывающий решает, нужен ли перезапуск: telemt перечитывает конфиг только
+// при старте, а лишний рестарт рвёт живые сессии пользователей.
+func GenerateTelemetConfig(cfg database.TelemetConfig) (bool, error) {
 	os.MkdirAll(TelemetConfigDir, 0755)
-	if err := os.WriteFile(TelemetConfigPath, BuildTelemetConfigTOML(cfg), 0644); err != nil {
+
+	next := BuildTelemetConfigTOML(cfg)
+	prev, err := os.ReadFile(TelemetConfigPath)
+	changed := err != nil || !bytes.Equal(prev, next)
+
+	if err := os.WriteFile(TelemetConfigPath, next, 0644); err != nil {
 		log.Println("Ошибка записи конфига telemt:", err)
-		return err
+		return false, err
 	}
-	log.Println("Конфиг telemt записан:", TelemetConfigPath)
-	return nil
+	if changed {
+		log.Println("Конфиг telemt изменился, записан:", TelemetConfigPath)
+	}
+	return changed, nil
 }
 
 // EnsureTelemetService создаёт systemd unit для telemt (по документации telemt)
@@ -285,7 +296,8 @@ func SetupTelemet() error {
 
 	SyncTelemetUsers()
 
-	if err := GenerateTelemetConfig(cfg); err != nil {
+	changed, err := GenerateTelemetConfig(cfg)
+	if err != nil {
 		return err
 	}
 
@@ -293,6 +305,14 @@ func SetupTelemet() error {
 		return err
 	}
 
+	// StartTelemet для уже запущенного сервиса — пустая операция, а telemt читает
+	// конфиг только при старте. Поэтому правки в БД молча не доезжали: конфиг на
+	// диске новый, процесс работает со старым. Так режимы classic/secure провисели
+	// невключёнными, пока это не нашлось руками. Рестартуем только при реальном
+	// изменении, чтобы не рвать сессии на каждом подъёме демона.
+	if changed {
+		return ReloadTelemet()
+	}
 	return StartTelemet()
 }
 
@@ -305,7 +325,7 @@ func GenerateAndReloadTelemet() {
 	}
 
 	if cfg.Enabled {
-		if err := GenerateTelemetConfig(cfg); err != nil {
+		if _, err := GenerateTelemetConfig(cfg); err != nil {
 			log.Println("Ошибка генерации конфига telemt:", err)
 		} else {
 			ReloadTelemet()
