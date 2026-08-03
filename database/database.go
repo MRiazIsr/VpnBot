@@ -93,6 +93,25 @@ type TelemetConfig struct {
 	ServerAddress string `json:"server_address"`                     // IP/домен для ссылок. Пусто = SERVER_IP
 	ProxyTag      string `json:"proxy_tag"`                          // proxy tag от @MTProxyBot (32 hex chars)
 	RuVDSEnabled  bool   `gorm:"default:false" json:"ruvds_enabled"` // Запустить telemt на RuVDS через SSH
+
+	// ClassicEnabled / SecureEnabled — дополнительные режимы MTProto рядом с FakeTLS.
+	//
+	// Нужны как диагностика и как запасной вход. У абонентов МегаФона FakeTLS-поток
+	// на наш адрес умирает: TCP проходит, ClientHello уходит, дальше ТСПУ рвёт поток
+	// и telemt минуту ждёт 64-байтный хендшейк впустую. При этом чужие прокси у тех
+	// же людей работают — и голый classic на зарубежном IP, и FakeTLS на Yandex Cloud.
+	// Значит режут либо наш адрес, либо конкретно домен lk.rt.ru. Classic не несёт
+	// ни SNI, ни TLS, поэтому разводит эти две версии: заработает — виноват домен,
+	// не заработает — выжжен адрес.
+	ClassicEnabled bool `gorm:"default:false" json:"classic_enabled"`
+	SecureEnabled  bool `gorm:"default:false" json:"secure_enabled"`
+	// AltPort — порт в ссылках classic/secure. Ноль = брать Port.
+	//
+	// Отдельно от LinkPort, потому что 443 им не подходит: на RuVDS его слушает
+	// nginx с ssl_preread, а у classic/secure нет ClientHello — nginx не увидит SNI
+	// и отправит соединение на сайт-приманку. Им нужен вход без разбора имени,
+	// то есть 9443 с его nft redirect в туннель.
+	AltPort int `gorm:"default:0" json:"alt_port"`
 }
 
 // HealthConfig — настройки HEALTH ALARM (синглтон, как TelemetConfig).

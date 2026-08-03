@@ -37,6 +37,19 @@ func GenerateTelemetProxyLink(serverAddr string, port int, secret string, tlsDom
 		serverAddr, port, secret, hexDomain)
 }
 
+// GenerateTelemetSecureLink строит ссылку для режима secure (обфускация без TLS).
+// Секрет тот же, отличается только префикс dd — новых секретов заводить не нужно.
+func GenerateTelemetSecureLink(serverAddr string, port int, secret string) string {
+	return fmt.Sprintf("tg://proxy?server=%s&port=%d&secret=dd%s", serverAddr, port, secret)
+}
+
+// GenerateTelemetClassicLink строит ссылку для classic MTProto — без TLS, без SNI,
+// голый обфусцированный поток. Маскировки нет вовсе, поэтому вариант заметный;
+// держим его как диагностический и как запасной вход, см. TelemetConfig.ClassicEnabled.
+func GenerateTelemetClassicLink(serverAddr string, port int, secret string) string {
+	return fmt.Sprintf("tg://proxy?server=%s&port=%d&secret=%s", serverAddr, port, secret)
+}
+
 // InstallTelemt скачивает бинарник telemt с GitHub releases если его нет
 func InstallTelemt() error {
 	if _, err := os.Stat(TelemetBinaryPath); err == nil {
@@ -118,8 +131,8 @@ func BuildTelemetConfigTOML(cfg database.TelemetConfig) []byte {
 	sb.WriteString("\n")
 
 	sb.WriteString("[general.modes]\n")
-	sb.WriteString("classic = false\n")
-	sb.WriteString("secure = false\n")
+	sb.WriteString(fmt.Sprintf("classic = %t\n", cfg.ClassicEnabled))
+	sb.WriteString(fmt.Sprintf("secure = %t\n", cfg.SecureEnabled))
 	sb.WriteString("tls = true\n")
 	sb.WriteString("\n")
 

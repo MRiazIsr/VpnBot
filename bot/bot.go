@@ -273,11 +273,23 @@ func Start(token string, adminID int64) {
 
 	// Обработчик кнопки Telegram Proxy — ссылка
 	b.Handle(&tele.Btn{Unique: "conn_tg_proxy"}, func(c tele.Context) error {
-		link, err := getTelemetLink(c)
+		links, err := getTelemetLinks(c)
 		if err != nil {
 			return c.Send(err.Error())
 		}
-		return c.Send("📡 Основная ссылка:\n\n" + link + "\n\n📡 Резервная ссылка:\n\n" + strings.Replace(link, "194.87.80.237", "87.247.157.120", 1))
+
+		msg := "📡 Основная ссылка:\n\n" + links.FakeTLS
+		if links.Secure != "" || links.Classic != "" {
+			msg += "\n\nЕсли основная не подключается — попробуйте запасные, " +
+				"они ходят другим способом. Аккаунт и лимиты те же."
+		}
+		if links.Secure != "" {
+			msg += "\n\n📡 Запасная 1:\n\n" + links.Secure
+		}
+		if links.Classic != "" {
+			msg += "\n\n📡 Запасная 2:\n\n" + links.Classic
+		}
+		return c.Send(msg)
 	})
 
 	// Обработчик кнопки Telegram Proxy — QR-код
@@ -718,16 +730,34 @@ func buildSubURL(token string) string {
 	return fmt.Sprintf("https://%s:8085/sub/%s", ServerIP, token)
 }
 
-// getTelemetLink возвращает ссылку tg://proxy для текущего юзера
+// telemetLinks — ссылки tg://proxy на один и тот же прокси в разных режимах.
+// Секрет у всех трёх общий, отличается только префикс, поэтому дополнительные
+// режимы ничего не стоят пользователю: та же учётка, другой способ маскировки.
+type telemetLinks struct {
+	FakeTLS string // ee<secret><домен> — основной, притворяется HTTPS к tls_domain
+	Secure  string // dd<secret> — обфускация без TLS, пусто если режим выключен
+	Classic string // <secret> — голый MTProto, пусто если режим выключен
+}
+
+// getTelemetLink возвращает основную (FakeTLS) ссылку — для QR-кода.
 func getTelemetLink(c tele.Context) (string, error) {
+	links, err := getTelemetLinks(c)
+	return links.FakeTLS, err
+}
+
+// getTelemetLinks возвращает ссылки tg://proxy для текущего юзера во всех
+// включённых режимах.
+func getTelemetLinks(c tele.Context) (telemetLinks, error) {
+	var out telemetLinks
+
 	var user database.User
 	if err := database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user).Error; err != nil {
-		return "", fmt.Errorf("❌ Пользователь не найден.")
+		return out, fmt.Errorf("❌ Пользователь не найден.")
 	}
 
 	var cfg database.TelemetConfig
 	if err := database.DB.First(&cfg).Error; err != nil || !cfg.Enabled {
-		return "", fmt.Errorf("❌ Telegram Proxy не настроен.")
+		return out, fmt.Errorf("❌ Telegram Proxy не настроен.")
 	}
 
 	// Ищем или создаём TelemetUser (атомарно через FirstOrCreate)
@@ -739,7 +769,7 @@ func getTelemetLink(c tele.Context) (string, error) {
 		}).
 		FirstOrCreate(&tu)
 	if result.Error != nil {
-		return "", fmt.Errorf("❌ Ошибка создания секрета прокси.")
+		return out, fmt.Errorf("❌ Ошибка создания секрета прокси.")
 	}
 	if result.RowsAffected > 0 {
 		// Новый секрет создан — перегенерируем конфиг telemt
@@ -762,8 +792,21 @@ func getTelemetLink(c tele.Context) (string, error) {
 		linkPort = cfg.Port
 	}
 
-	link := service.GenerateTelemetProxyLink(serverAddr, linkPort, tu.Secret, tlsDomain)
-	return link, nil
+	// classic/secure идут своим портом: 443 им не подходит, там nginx разбирает
+	// SNI, которого у них нет. См. TelemetConfig.AltPort.
+	altPort := cfg.AltPort
+	if altPort == 0 {
+		altPort = cfg.Port
+	}
+
+	out.FakeTLS = service.GenerateTelemetProxyLink(serverAddr, linkPort, tu.Secret, tlsDomain)
+	if cfg.SecureEnabled {
+		out.Secure = service.GenerateTelemetSecureLink(serverAddr, altPort, tu.Secret)
+	}
+	if cfg.ClassicEnabled {
+		out.Classic = service.GenerateTelemetClassicLink(serverAddr, altPort, tu.Secret)
+	}
+	return out, nil
 }
 
 func formatBytes(b int64) string {
