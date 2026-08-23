@@ -296,12 +296,12 @@ scp -i ~/.ssh/russian-vps deploy/ruvds/backhaul/render-config.sh \
 # (а) порт с русским выходом
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 'set -e
   sed "s|^RELAY_VLESS_PORTS=.*|RELAY_VLESS_PORTS=\"2053 2059\"|" /tmp/params.env.example > /tmp/bad-ru.env
-  MODE=production bash /tmp/render-config.sh /tmp/bad-ru.env 2>&1 | head -3 || true'
+  bash /tmp/render-config.sh /tmp/bad-ru.env 2>&1 | head -3 || true'
 
 # (б) порт, занятый nginx
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 'set -e
   sed "s|^RELAY_VLESS_PORTS=.*|RELAY_VLESS_PORTS=\"443 2053\"|" /tmp/params.env.example > /tmp/bad-443.env
-  MODE=production bash /tmp/render-config.sh /tmp/bad-443.env 2>&1 | head -3 || true'
+  bash /tmp/render-config.sh /tmp/bad-443.env 2>&1 | head -3 || true'
 ```
 
 Ожидается: (а) «ОТКАЗ: порт 2059 попал в список relay» с пояснением про русский адрес; (б) «ОТКАЗ: порт 443 уже занят» с упоминанием nginx. Если хоть одна проверка не сработала — исправить, прежде чем идти дальше. Убрать за собой: `rm -f /tmp/bad-*.env /tmp/render-config.sh /tmp/params.env.example`.
@@ -595,14 +595,14 @@ Relay слушает порт+30000, а на боевом порту сидит 
 
 ---
 
-## Task 4: Развернуть Hetzner-часть и relay на staging
+## Task 4: Развернуть Hetzner-часть и relay на смещённых портах
 
 **Files:**
 - Использует существующие: `deploy/hetzner/backhaul/install.sh`, `deploy/ruvds/backhaul/install.sh`, `scripts/backhaul/verify.sh`
 
 **Interfaces:**
 - Consumes: `params.env` из задачи 2.
-- Produces: работающие `sing-box-relay` (staging-порты 32053–32058, 39443), `backhaul-monitor`, `backhaul-fssh@vless`, `backhaul-fssh@mtproto` на RuVDS; `wg-quick@wg1`, `backhaul-probe` на Hetzner.
+- Produces: работающие `sing-box-relay` (смещённые порты 32053–32058; 39443 нет — 9443 в первую волну не входит), `backhaul-monitor`, `backhaul-fssh@vless`, `backhaul-fssh@mtproto` на RuVDS; `wg-quick@wg1`, `backhaul-probe` на Hetzner.
 
 - [ ] **Step 1: Заполнить params.env**
 
@@ -630,13 +630,13 @@ ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
 
 Ожидается `active`, `active` и адрес `10.9.0.1/24`.
 
-- [ ] **Step 3: Развернуть RuVDS на staging-портах**
+- [ ] **Step 3: Развернуть RuVDS на смещённых портах**
 
 ```bash
 scp -i ~/.ssh/russian-vps -r deploy/ruvds/backhaul deploy/backhaul/params.env \
   root@87.247.157.120:/tmp/
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
-  'cd /tmp/backhaul && MODE=staging bash install.sh /tmp/params.env'
+  'cd /tmp/backhaul && bash install.sh /tmp/params.env'
 ```
 
 - [ ] **Step 4: Убедиться, что прод не задет**
@@ -644,10 +644,13 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 ```bash
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
   'echo "боевых правил DNAT:"; nft list table ip relay | grep -cE "dnat|redirect"; \
-   echo "staging-порты:"; ss -tln | grep -cE ":3205[3-8]|:39443"'
+   echo "смещённые порты relay:"; ss -tln | grep -cE ":3205[3-8]"'
 ```
 
-Ожидается 11 боевых правил (как было) и 7 staging-слушателей. Если боевых стало меньше — немедленно `systemctl restart nftables` и разбираться.
+Ожидается 11 боевых правил (как было) и 6 слушателей на смещённых портах —
+по числу портов в `RELAY_VLESS_PORTS`; `RELAY_MTPROTO_PORTS` пуст намеренно
+(9443 в первую волну не входит, см. params.env.example). Если боевых правил
+стало меньше — немедленно `systemctl restart nftables` и разбираться.
 
 - [ ] **Step 5: Прогнать сквозную проверку**
 
@@ -658,7 +661,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 
 Ожидается: ярус `emergency` здоров по обоим классам, `primary` и `secondary` помечены disabled и не опрашиваются.
 
-- [ ] **Step 6: Проверить живым клиентом на staging-порту**
+- [ ] **Step 6: Проверить живым клиентом на смещённом порту**
 
 Взять профиль DE-WL (2058), в клиенте поменять порт на **32058**, подключиться, открыть любой сайт. Это доказывает всю цепочку `клиент → relay → emergency → Hetzner` до того, как трогается прод.
 
@@ -666,7 +669,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 
 ```bash
 git add deploy/backhaul/params.env.example
-git commit -m "chore(backhaul): staging развёрнут, emergency проверен живым клиентом" --allow-empty
+git commit -m "chore(backhaul): relay развёрнут на смещённых портах, emergency проверен живым клиентом" --allow-empty
 ```
 
 ---
@@ -681,7 +684,13 @@ git commit -m "chore(backhaul): staging развёрнут, emergency прове
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 '/tmp/rollback-drill.sh'
 ```
 
-Все строки `ОК`. Иначе — стоп, возврат к задаче 1.
+Все строки `ОК` (их шесть — по числу вызовов `ok()` в скрипте), код возврата 0.
+Иначе — стоп, возврат к задаче 1.
+
+Прогон теперь проверяет и вторую форму отката — ту, которой пользуется
+`promote.sh`: `add table` + `delete table` + снимок ОДНИМ `nft -f` поверх живой
+таблицы, в которой уже стоит `redirect`. Именно этой формой возвращается прод,
+поэтому она и должна быть доказана.
 
 - [ ] **Step 2: Снять эталонный отпечаток боевых правил**
 
@@ -700,7 +709,17 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
   'cd /tmp/backhaul && CONFIRM_SEC=300 bash promote.sh --only 2058'
 ```
 
-Ожидается: снимок непустой с числом правил из шага 2, таймер взведён, «порт 2058 снят с DNAT».
+Ожидается ровно это:
+
+* «в снимке правил: N» — N совпадает с числом из шага 2;
+* «проверка, что relay запущен» без отказа;
+* «таймер автоотката взведён на 300с»;
+* «порт 2058 переведён на relay :32058 (redirect, handle H)».
+
+Формулировка важна: правило не снимается, а ЗАМЕНЯЕТСЯ. Если в выводе
+«АВАРИЯ: на боевом порту 2058 нет правила ни dnat, ни redirect» — это не
+безобидное «уже переведён», а состояние, в котором порт уже проваливается в
+локальный sing-box; скрипт откатится сам и вернёт ненулевой код.
 
 - [ ] **Step 4: Проверить живым клиентом на боевом порту**
 
@@ -874,7 +893,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 '/usr/local/bin/sing-box check -c 
 ```bash
 # в params.env: PRIMARY_ENABLED=true
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
-  'cd /tmp/backhaul && MODE=production bash render-config.sh /tmp/params.env && \
+  'cd /tmp/backhaul && bash render-config.sh /tmp/params.env && \
    systemctl restart sing-box-bh-anytls sing-box-relay backhaul-monitor && \
    /usr/local/bin/backhaul-monitor -config /etc/vpnbot/backhaul.json -probe'
 ```
@@ -1053,7 +1072,7 @@ ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
 ```bash
 # в params.env: SECONDARY_ENABLED=true
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
-  'cd /tmp/backhaul && MODE=production bash render-config.sh /tmp/params.env && \
+  'cd /tmp/backhaul && bash render-config.sh /tmp/params.env && \
    systemctl restart sing-box-bh-hy2 sing-box-relay backhaul-monitor && \
    scripts/backhaul/switch.sh status'
 ```

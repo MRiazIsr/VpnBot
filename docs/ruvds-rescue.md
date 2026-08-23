@@ -190,11 +190,25 @@ ss -tlnp | grep ':22'
 
 `nft flush ruleset` снесёт и таблицу `ip relay` со старым DNAT на Hetzner.
 Это допустимо: все 11 профилей, ходивших через RuVDS, и так мертвы, а
-восстановление DNAT — одна команда:
+восстановление — одна команда, и это НЕ uninstall.sh:
 
 ```bash
-/root/backhaul-deploy/uninstall.sh /etc/backhaul/params.env   # вернёт DNAT по списку портов
+systemctl restart nftables
 ```
+
+`nftables.service` устроен как `ExecStop=nft flush ruleset` +
+`ExecStart=nft -f /etc/nftables.conf`, а в файле лежат все три боевые таблицы
+(`ip relay` с DNAT, `ip mss_clamp`, `inet mtproxy_smart_syn_alt`). Одна команда
+возвращает боевое состояние целиком и не зависит ни от скриптов backhaul, ни
+от Go-бинарей, ни от снимков. Только `restart`: у `reload` нет `flush ruleset`,
+и `nft -f` поверх живых таблиц задублирует правила.
+
+`uninstall.sh` — штатный, а не аварийный путь: он восстанавливает ruleset из
+собственного снимка `/etc/backhaul/nftables-before-backhaul.rules`, а если
+снимка нет — отказывается и отправляет к той же команде выше. Раньше он
+пытался поднять DNAT через `iptables -t nat -A`, который на этой машине
+собран как legacy и nftables-правил не видит вовсе: восстановление было
+no-op с бодрым сообщением об успехе.
 
 После восстановления доступа проверить с Hetzner:
 
@@ -229,9 +243,14 @@ deploy/hetzner/backhaul/install.sh /etc/backhaul/params.env   # wg1, probe, reve
 deploy/ruvds/backhaul/push.sh      /etc/backhaul/params.env --install
 ```
 
-Что при этом получится: relay на RuVDS слушает **staging-порты** (боевой +30000,
-то есть 30443, 32053…32060, 38446, 39443), боевой DNAT не тронут, трафик
-staging-портов едет `RuVDS → reverse SSH → Hetzner 10.9.0.1:<боевой порт>`.
+Что при этом получится: relay на RuVDS слушает **смещённые порты** (боевой
++30000, то есть 32053…32058 — ровно по списку `RELAY_VLESS_PORTS`), боевой
+DNAT не тронут, трафик смещённых портов едет
+`RuVDS → SSH-туннель → Hetzner 10.9.0.1:<боевой порт>`.
+
+Смещение не временное: боевые порты занимает основной sing-box RuVDS, relay
+остаётся на смещённых навсегда, а боевой порт заводится на него правилом
+`nft ... redirect to :<порт+30000>` — это и делает `promote.sh`.
 
 ## Как убедиться, что цепочка живая
 
@@ -244,16 +263,21 @@ staging-портов едет `RuVDS → reverse SSH → Hetzner 10.9.0.1:<бо�
 ```
 
 Снаружи, живым клиентом: взять существующий профиль (UUID, Reality-ключи, SNI
-и short ID не меняются) и поменять в нём **только порт** на staging —
-например `2059 → 32059`. Если соединение установилось, цепочка
+и short ID не меняются) и поменять в нём **только порт** на смещённый —
+например `2058 → 32058`. Если соединение установилось, цепочка
 RuVDS→Hetzner работает, и Reality при этом завершился на Hetzner.
 
-Перевод боевых портов — отдельным шагом, с автооткатом:
+Брать для этой проверки надо порт из `RELAY_VLESS_PORTS`: у RU-профилей
+(2059, 2060, 8446) смещённого порта нет и не будет — они выходят с русского
+адреса через локальный sing-box и на relay не заводятся.
+
+Перевод боевых портов — отдельным шагом, по одному порту, с автооткатом:
 
 ```bash
-/root/backhaul-deploy/promote.sh /etc/backhaul/params.env
-# проверить живым клиентом на боевом порту, затем:
+/root/backhaul-deploy/promote.sh /etc/backhaul/params.env --only 2058
+# проверить живым клиентом на боевом порту 2058, затем:
 /root/backhaul-deploy/promote.sh --confirm
+# не подтвердили — откатится само через CONFIRM_SEC (по умолчанию 300 с)
 ```
 
 ## Дальше
