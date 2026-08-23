@@ -35,7 +35,17 @@ do_rollback() {
     if nft -f "$DNAT_SAVE"; then
       log "DNAT восстановлен из ${DNAT_SAVE}"
     else
-      warn "nft -f не отработал — АВАРИЙНЫЙ РЫЧАГ: systemctl restart nftables"
+      warn "nft -f не отработал — жму АВАРИЙНЫЙ РЫЧАГ: systemctl restart nftables"
+      # Таймер автоотката дёргает этот путь без оператора: если рычаг не
+      # нажать автоматически, прод останется вовсе без DNAT и без кричащего
+      # предупреждения — молча. nftables.service = ExecStop=nft flush ruleset
+      # + ExecStart=nft -f /etc/nftables.conf, а там все три боевых таблицы
+      # (ip relay, ip mss_clamp, inet mtproxy_smart_syn_alt).
+      if systemctl restart nftables; then
+        log "АВАРИЙНЫЙ РЫЧАГ сработал: nftables перезапущен из /etc/nftables.conf"
+      else
+        warn "АВАРИЙНЫЙ РЫЧАГ ТОЖЕ НЕ СРАБОТАЛ — прод без DNAT, нужен человек немедленно"
+      fi
     fi
   else
     warn "снимок ${DNAT_SAVE} пуст или отсутствует"
@@ -163,8 +173,18 @@ else
 fi
 
 for p in ${PROMOTE_PORTS}; do
-  handle=$(nft -a list table ip relay 2>/dev/null \
-    | awk -v p="$p" '$0 ~ "dport " p " (dnat|redirect)" {print $NF; exit}')
+  # Список снимаем отдельной командой и проверяем ЕЁ код возврата: раньше это
+  # было nft ... | awk ..., а под pipefail код пайпа — это код awk, который на
+  # пустом вводе всегда 0. Сломанный nft (права, race, бинарь недоступен) тем
+  # самым выглядел неотличимо от "правило уже снято" на каждом порту цикла.
+  if ! listing=$(nft -a list table ip relay 2>&1); then
+    echo "ОТКАЗ: nft -a list table ip relay не отработал — не знаем, в каком" >&2
+    echo "  состоянии прод. Продолжать цикл вслепую нельзя, откатываюсь." >&2
+    echo "  Вывод nft: $listing" >&2
+    do_rollback
+    exit 1
+  fi
+  handle=$(awk -v p="$p" '$0 ~ "dport " p " (dnat|redirect)" {print $NF; exit}' <<< "$listing")
   if [[ -z "$handle" ]]; then
     warn "порт $p: правило dnat не найдено — возможно, уже переведён"
     continue
