@@ -113,6 +113,14 @@ jobs:
           echo "Building..."
           go build -o app_bin .
 
+          # 2b. Бинарники backhaul. Просто собираются и кладутся рядом —
+          # никакие сервисы при этом не трогаются. Их разворачивают
+          # deploy/{hetzner,ruvds}/backhaul/install.sh, вручную и осознанно.
+          mkdir -p /opt/VpnBot/bin
+          go build -o /opt/VpnBot/bin/backhaul-probe ./cmd/backhaul-probe
+          go build -o /opt/VpnBot/bin/backhaul-monitor ./cmd/backhaul-monitor
+          echo "backhaul binaries built"
+
           # 3. Перезапускаем сервис
           echo "Restarting service..."
           systemctl restart vpnbot
