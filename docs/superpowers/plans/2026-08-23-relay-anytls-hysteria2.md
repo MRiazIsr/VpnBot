@@ -49,9 +49,9 @@
 **Interfaces:**
 - Produces: `do_rollback()` восстанавливает `table ip relay` из `/etc/backhaul/relay-nat.nft`; `snapshot_dnat()` пишет этот файл и завершается ошибкой при пустом снимке.
 
-- [ ] **Step 1: Написать учебный прогон, который сейчас провалится**
+- [ ] **Step 1: Написать учебный прогон механики отката**
 
-Создать `scripts/backhaul/rollback-drill.sh`. Он проверяет механизм снимка и восстановления на **служебной таблице** `ip bh_drill`, не касаясь боевых правил:
+Создать `scripts/backhaul/rollback-drill.sh`. Это не красный тест: он проверяет механику снимка и восстановления nft напрямую и должен пройти сразу. Смысл — доказать, что механизм, на который мы переводим откат, работает на этой машине. Работает на **служебной таблице** `ip bh_drill`, не касаясь боевых правил:
 
 ```bash
 #!/usr/bin/env bash
@@ -107,7 +107,7 @@ scp -i ~/.ssh/russian-vps scripts/backhaul/rollback-drill.sh root@87.247.157.120
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 'chmod +x /tmp/rollback-drill.sh && /tmp/rollback-drill.sh'
 ```
 
-Ожидается пять строк `ОК:`, последняя — «iptables-save правил не видит — подтверждение исходного дефекта». Если последняя строка провалилась, значит на машине уже не legacy-iptables, и задачу надо пересмотреть.
+Ожидается четыре строки `ОК:` и код возврата 0, последняя строка — «iptables-save правил не видит — подтверждение исходного дефекта». Если последняя строка провалилась, значит на машине уже не legacy-iptables, и задачу надо пересмотреть.
 
 - [ ] **Step 3: Заменить снимок в promote.sh**
 
@@ -296,12 +296,12 @@ scp -i ~/.ssh/russian-vps deploy/ruvds/backhaul/render-config.sh \
 # (а) порт с русским выходом
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 'set -e
   sed "s|^RELAY_VLESS_PORTS=.*|RELAY_VLESS_PORTS=\"2053 2059\"|" /tmp/params.env.example > /tmp/bad-ru.env
-  MODE=production bash /tmp/render-config.sh /tmp/bad-ru.env 2>&1 | head -3 || true'
+  bash /tmp/render-config.sh /tmp/bad-ru.env 2>&1 | head -3 || true'
 
 # (б) порт, занятый nginx
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 'set -e
   sed "s|^RELAY_VLESS_PORTS=.*|RELAY_VLESS_PORTS=\"443 2053\"|" /tmp/params.env.example > /tmp/bad-443.env
-  MODE=production bash /tmp/render-config.sh /tmp/bad-443.env 2>&1 | head -3 || true'
+  bash /tmp/render-config.sh /tmp/bad-443.env 2>&1 | head -3 || true'
 ```
 
 Ожидается: (а) «ОТКАЗ: порт 2059 попал в список relay» с пояснением про русский адрес; (б) «ОТКАЗ: порт 443 уже занят» с упоминанием nginx. Если хоть одна проверка не сработала — исправить, прежде чем идти дальше. Убрать за собой: `rm -f /tmp/bad-*.env /tmp/render-config.sh /tmp/params.env.example`.
@@ -334,7 +334,13 @@ RUVDS_IP=87.247.157.120
 #
 # НЕТ 4443/8444/8447: см. PROTECTED_DIRECT_PORTS.
 RELAY_VLESS_PORTS="2053 2054 2055 2056 2057 2058"
-RELAY_MTPROTO_PORTS="9443"
+RELAY_MTPROTO_PORTS=""   # 9443 НЕ переводим первой волной, см. params.env.example
+
+# Полный список публичных TCP-портов RuVDS. Отдельная переменная, потому что
+# RELAY_*_PORTS означают «переведено на relay», а это — «машина обязана
+# принимать». Одну переменную в двух смыслах читали четыре скрипта, и сужение
+# RELAY_VLESS_PORTS в задаче 2 чуть не закрыло фаерволом всё непереведённое.
+PUBLIC_TCP_PORTS="443 2053 2054 2055 2056 2057 2058 2059 2060 4443 8444 8445 8446 8447 9443"
 
 # Порты с русским выходом. render-config.sh откажется собирать конфиг, если
 # любой из них попадёт в RELAY_*_PORTS.
@@ -471,14 +477,160 @@ promote.sh переводил все десять портов одним цик
 
 ---
 
-## Task 4: Развернуть Hetzner-часть и relay на staging
+## ВАЖНО: изменение схемы после проверки на машине (23.08.2026)
+
+Задачи 4-7 исполняются по схеме **REDIRECT**, а не «relay биндит боевые порты».
+Спека и первая редакция этого плана предполагали второе — это оказалось
+неисполнимо.
+
+**Что выяснилось.** Основной sing-box RuVDS (pid 702, `/etc/sing-box/config.json`,
+управляется vpnbot) уже слушает 2053, 2054, 2055, 2056, 2057, 2058 — ровно те
+порты, которые relay должен был занять. Сейчас это незаметно, потому что DNAT в
+PREROUTING перехватывает пакет раньше, чем ядро дойдёт до локального сокета:
+слушатели есть, но трафика не получают. Уберите DNAT — и relay не сможет
+забиндить занятые порты, а sing-box при неудачном бинде не поднимается целиком,
+то есть падают ВСЕ relay-порты разом.
+
+На хосте три процесса sing-box: 702 (основной), 33615 (`tunnel9443.json`),
+35630 (`tunnel-alt.json`). Ни один из них не relay.
+
+**Новая схема** повторяет приём, который у вас уже работает в проде для MTProto
+(`tcp dport 9443 redirect to :29443`):
+
+```
+клиент → RuVDS:2053 → nft REDIRECT → relay :32053 → ярус → Hetzner
+```
+
+Relay остаётся на своих портах навсегда — «staging-порты» перестают быть
+временными и становятся штатными. Следствия:
+
+* конфликта портов не возникает ни в одном режиме;
+* основной sing-box продолжает обслуживать 2059/2060/8446 с русским выходом — его не нужно ни трогать, ни перенастраивать;
+* `GenerateAndReloadRuVDS()` в vpnbot не затрагивается вовсе;
+* откат остаётся правкой одного ruleset: REDIRECT меняется обратно на DNAT;
+* исчезает отдельный шаг «переезд со staging на бой» вместе со своим классом отказов.
+
+**Что это меняет в задачах ниже.** В задаче 4 relay ставится на свои порты и там
+и остаётся. В задаче 5 канареечный перевод порта означает не «удалить DNAT», а
+«заменить правило DNAT на правило REDIRECT»; откат — обратная замена. Снимок и
+восстановление из задачи 1 работают без изменений: они оперируют таблицей
+целиком, а не отдельными правилами.
+
+Таблица соответствия, которую надо держать в голове при чтении конфига relay:
+боевой порт `N` — порт relay `N + STAGING_PORT_OFFSET` (30000).
+
+---
+
+## Task 3b: promote.sh должен ЗАМЕНЯТЬ правило, а не удалять
+
+Следствие схемы REDIRECT, которое нельзя пропустить.
+
+Сейчас `promote.sh` удаляет правило DNAT и на этом останавливается — в старой
+схеме это было верно, потому что relay сам слушал боевой порт и трафик
+проваливался в него. В новой схеме relay слушает `порт + 30000`, а на боевом
+порту сидит **основной sing-box** (pid 702). Удалить DNAT и ничего не добавить
+означает отдать трафик ему.
+
+Это не отказ, а хуже: клиент подключится, всё будет работать — но выход
+окажется РУССКИМ вместо немецкого, потому что у основного инстанса
+`route.final=direct`. Профили `[DE-*]` молча начнут выпускать трафик не оттуда.
+Такую поломку не видно ни в логах relay, ни в мониторинге: она выглядит как
+успех.
+
+**Files:**
+- Modify: `deploy/ruvds/backhaul/promote.sh` (цикл перевода и `do_rollback`)
+
+**Interfaces:**
+- Consumes: `STAGING_PORT_OFFSET` из params; `do_rollback()` из задачи 1.
+- Produces: перевод порта = замена `dnat` на `redirect to :<порт+30000>`.
+
+- [ ] **Step 1: Заменять правило вместо удаления**
+
+В цикле перевода, после успешного удаления правила DNAT по handle, немедленно
+добавить правило редиректа на порт relay:
+
+```bash
+  relay_port=$(( p + STAGING_PORT_OFFSET ))
+  if ! nft add rule ip relay prerouting tcp dport "$p" redirect to :"$relay_port"; then
+    warn "порт $p: не удалось добавить redirect на :$relay_port — откатываюсь"
+    do_rollback
+    exit 1
+  fi
+  log "порт $p заведён на relay :$relay_port"
+```
+
+Порядок именно такой — сначала удалить dnat, потом добавить redirect: два
+правила на один `dport` в одной цепочке сработают по первому совпавшему, и
+держать оба одновременно значит не понимать, какое из них действует.
+
+- [ ] **Step 2: Проверить, что окно между правилами не рвёт живых**
+
+Между удалением и добавлением есть промежуток, в котором боевой порт
+обслуживает основной sing-box. Установленные соединения он не затронет
+(правила PREROUTING применяются к новым потокам), но новые в этот момент уйдут
+не туда. Замерить длительность окна и записать в отчёт:
+
+```bash
+ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+  'time (nft delete rule ip relay prerouting handle X; nft add rule ip relay prerouting tcp dport 2058 redirect to :32058)'
+```
+
+Если окно измеримо велико (>50 мс), переделать на атомарную замену через
+`nft -f` с полным описанием цепочки вместо двух отдельных вызовов.
+
+- [ ] **Step 3: Убедиться, что откат снимает редиректы**
+
+`do_rollback` восстанавливает `table ip relay` из снимка целиком (`nft delete
+table` + `nft -f`), поэтому добавленные редиректы исчезают вместе с таблицей, а
+правила DNAT возвращаются из снимка. Отдельной логики не требуется —
+**проверить это чтением** и записать вывод в отчёт, а не предполагать.
+
+- [ ] **Step 4: Проверка синтаксиса и коммит**
+
+```bash
+bash -n deploy/ruvds/backhaul/promote.sh && echo "синтаксис ок"
+git add deploy/ruvds/backhaul/promote.sh
+git commit -m "fix(backhaul): перевод порта — замена dnat на redirect, а не удаление
+
+Relay слушает порт+30000, а на боевом порту сидит основной sing-box RuVDS.
+Удалить DNAT и ничего не добавить означало отдать ему трафик: клиент
+подключается, всё работает, но выход становится РУССКИМ вместо немецкого
+(route.final=direct у основного инстанса). Поломка выглядит как успех и не
+видна ни в логах relay, ни в мониторинге."
+```
+
+---
+
+## СТОП: `nftables-apply.sh` НЕ ЗАПУСКАТЬ
+
+Финальное ревью 23.08.2026 нашло в нём три дефекта, каждый из которых валит
+прод молча:
+
+* генерируемый allow-list не содержит `29443` — а вход MTProto это
+  `tcp dport 9443 redirect to :29443`, то есть input видит именно 29443.
+  `policy drop` убивает SYN, и MTProto умирает на шаге 4 runbook'а, ещё до
+  начала перевода портов;
+* ruleset не пропускает UDP вообще, а аудит того, что машина отдаёт по UDP,
+  никто не проводил (живые UDP-слушатели на 23.08: 29443, 29445, 35032);
+* таймер отката внутри скрипта зовёт `nft` без проверки результата и снимает
+  метку в любом случае: при пустом снимке он выполняет только `flush ruleset`,
+  стирая `ip relay`, `ip mss_clamp` и `inet mtproxy_smart_syn_alt`, и пишет в
+  журнал успех.
+
+Скрипт выведен из пути развёртывания. Фаервол — отдельная задача со своим
+ревью; для миграции он не нужен, машина сегодня живёт без него. Шаг 4 из
+`docs/backhaul-triple.md` пропускается.
+
+---
+
+## Task 4: Развернуть Hetzner-часть и relay на смещённых портах
 
 **Files:**
 - Использует существующие: `deploy/hetzner/backhaul/install.sh`, `deploy/ruvds/backhaul/install.sh`, `scripts/backhaul/verify.sh`
 
 **Interfaces:**
 - Consumes: `params.env` из задачи 2.
-- Produces: работающие `sing-box-relay` (staging-порты 32053–32058, 39443), `backhaul-monitor`, `backhaul-fssh@vless`, `backhaul-fssh@mtproto` на RuVDS; `wg-quick@wg1`, `backhaul-probe` на Hetzner.
+- Produces: работающие `sing-box-relay` (смещённые порты 32053–32058; 39443 нет — 9443 в первую волну не входит), `backhaul-monitor`, `backhaul-fssh@vless`, `backhaul-fssh@mtproto` на RuVDS; `wg-quick@wg1`, `backhaul-probe` на Hetzner.
 
 - [ ] **Step 1: Заполнить params.env**
 
@@ -506,13 +658,13 @@ ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
 
 Ожидается `active`, `active` и адрес `10.9.0.1/24`.
 
-- [ ] **Step 3: Развернуть RuVDS на staging-портах**
+- [ ] **Step 3: Развернуть RuVDS на смещённых портах**
 
 ```bash
 scp -i ~/.ssh/russian-vps -r deploy/ruvds/backhaul deploy/backhaul/params.env \
   root@87.247.157.120:/tmp/
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
-  'cd /tmp/backhaul && MODE=staging bash install.sh /tmp/params.env'
+  'cd /tmp/backhaul && bash install.sh /tmp/params.env'
 ```
 
 - [ ] **Step 4: Убедиться, что прод не задет**
@@ -520,10 +672,13 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 ```bash
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
   'echo "боевых правил DNAT:"; nft list table ip relay | grep -cE "dnat|redirect"; \
-   echo "staging-порты:"; ss -tln | grep -cE ":3205[3-8]|:39443"'
+   echo "смещённые порты relay:"; ss -tln | grep -cE ":3205[3-8]"'
 ```
 
-Ожидается 11 боевых правил (как было) и 7 staging-слушателей. Если боевых стало меньше — немедленно `systemctl restart nftables` и разбираться.
+Ожидается 11 боевых правил (как было) и 6 слушателей на смещённых портах —
+по числу портов в `RELAY_VLESS_PORTS`; `RELAY_MTPROTO_PORTS` пуст намеренно
+(9443 в первую волну не входит, см. params.env.example). Если боевых правил
+стало меньше — немедленно `systemctl restart nftables` и разбираться.
 
 - [ ] **Step 5: Прогнать сквозную проверку**
 
@@ -534,7 +689,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 
 Ожидается: ярус `emergency` здоров по обоим классам, `primary` и `secondary` помечены disabled и не опрашиваются.
 
-- [ ] **Step 6: Проверить живым клиентом на staging-порту**
+- [ ] **Step 6: Проверить живым клиентом на смещённом порту**
 
 Взять профиль DE-WL (2058), в клиенте поменять порт на **32058**, подключиться, открыть любой сайт. Это доказывает всю цепочку `клиент → relay → emergency → Hetzner` до того, как трогается прод.
 
@@ -542,7 +697,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 
 ```bash
 git add deploy/backhaul/params.env.example
-git commit -m "chore(backhaul): staging развёрнут, emergency проверен живым клиентом" --allow-empty
+git commit -m "chore(backhaul): relay развёрнут на смещённых портах, emergency проверен живым клиентом" --allow-empty
 ```
 
 ---
@@ -557,7 +712,13 @@ git commit -m "chore(backhaul): staging развёрнут, emergency прове
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 '/tmp/rollback-drill.sh'
 ```
 
-Все строки `ОК`. Иначе — стоп, возврат к задаче 1.
+Все строки `ОК` (их шесть — по числу вызовов `ok()` в скрипте), код возврата 0.
+Иначе — стоп, возврат к задаче 1.
+
+Прогон теперь проверяет и вторую форму отката — ту, которой пользуется
+`promote.sh`: `add table` + `delete table` + снимок ОДНИМ `nft -f` поверх живой
+таблицы, в которой уже стоит `redirect`. Именно этой формой возвращается прод,
+поэтому она и должна быть доказана.
 
 - [ ] **Step 2: Снять эталонный отпечаток боевых правил**
 
@@ -576,7 +737,17 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
   'cd /tmp/backhaul && CONFIRM_SEC=300 bash promote.sh --only 2058'
 ```
 
-Ожидается: снимок непустой с числом правил из шага 2, таймер взведён, «порт 2058 снят с DNAT».
+Ожидается ровно это:
+
+* «в снимке правил: N» — N совпадает с числом из шага 2;
+* «проверка, что relay запущен» без отказа;
+* «таймер автоотката взведён на 300с»;
+* «порт 2058 переведён на relay :32058 (redirect, handle H)».
+
+Формулировка важна: правило не снимается, а ЗАМЕНЯЕТСЯ. Если в выводе
+«АВАРИЯ: на боевом порту 2058 нет правила ни dnat, ни redirect» — это не
+безобидное «уже переведён», а состояние, в котором порт уже проваливается в
+локальный sing-box; скрипт откатится сам и вернёт ненулевой код.
 
 - [ ] **Step 4: Проверить живым клиентом на боевом порту**
 
@@ -629,7 +800,7 @@ AnyTLS занимает слот `primary` (`Rank=1`). Слот свободен
 
 **Interfaces:**
 - Consumes: `BACKEND_HOST`, `FRP_SOCKS_VLESS_PORT` (11080), `FRP_SOCKS_MTPROTO_PORT` (11090) — слот primary.
-- Produces: `ANYTLS_PORT`, `ANYTLS_PASSWORD`, `ANYTLS_SNI` в params; сервис `sing-box-bh-anytls` на RuVDS; inbound `anytls` на Hetzner.
+- Produces: `ANYTLS_PORT`, `ANYTLS_PASSWORD`, `ANYTLS_SNI`, `ANYTLS_REALITY_PRIVATE`, `ANYTLS_REALITY_PUBLIC`, `ANYTLS_REALITY_SHORT_ID` в params; сервис `sing-box-bh-anytls` на RuVDS; inbound `anytls` поверх Reality на Hetzner.
 
 - [ ] **Step 1: Добавить параметры**
 
@@ -750,7 +921,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 '/usr/local/bin/sing-box check -c 
 ```bash
 # в params.env: PRIMARY_ENABLED=true
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
-  'cd /tmp/backhaul && MODE=production bash render-config.sh /tmp/params.env && \
+  'cd /tmp/backhaul && bash render-config.sh /tmp/params.env && \
    systemctl restart sing-box-bh-anytls sing-box-relay backhaul-monitor && \
    /usr/local/bin/backhaul-monitor -config /etc/vpnbot/backhaul.json -probe'
 ```
@@ -929,7 +1100,7 @@ ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
 ```bash
 # в params.env: SECONDARY_ENABLED=true
 ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
-  'cd /tmp/backhaul && MODE=production bash render-config.sh /tmp/params.env && \
+  'cd /tmp/backhaul && bash render-config.sh /tmp/params.env && \
    systemctl restart sing-box-bh-hy2 sing-box-relay backhaul-monitor && \
    scripts/backhaul/switch.sh status'
 ```
