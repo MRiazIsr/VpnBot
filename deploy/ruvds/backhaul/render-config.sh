@@ -34,6 +34,44 @@ for prot in $PROTECTED_DIRECT_PORTS; do
   done
 done
 
+# ─────────────────── порты с русским выходом ───────────────────
+# RU (2059), RU-TCP (2060), RU-STLS (8446) обслуживаются локальным sing-box на
+# RuVDS и выходят в интернет с русского адреса — в этом весь их смысл. Relay
+# отправляет всё на Hetzner, то есть превратил бы их в немецкие.
+RU_DIRECT_EXIT_PORTS="${RU_DIRECT_EXIT_PORTS:-2059 2060 8446}"
+for ru in $RU_DIRECT_EXIT_PORTS; do
+  for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
+    if [[ "$p" == "$ru" ]]; then
+      echo "ОТКАЗ: порт $ru попал в список relay." >&2
+      echo "  Это профиль с выходом с РУССКОГО адреса; relay уведёт его в Hetzner." >&2
+      echo "  Уберите $ru из RELAY_VLESS_PORTS в params.env." >&2
+      exit 1
+    fi
+  done
+done
+
+# ─────────────────── порты, занятые чужим процессом ───────────────────
+# sing-box не поднимется, если хоть один listen-порт занят. Отказ одного порта
+# кладёт ВЕСЬ relay, поэтому проверяем до генерации, а не после рестарта.
+# Пример: 443 держит nginx (ssl_preread по SNI).
+#
+# grep без ^-якоря: `ss -tlnp` кладёт имя процесса не первым полем, а внутрь
+# users:(("sing-box",pid=...,fd=...)) — якорь на начало строки никогда бы не
+# совпал, и повторный запуск render-config.sh на уже поднятом relay ложно
+# отказывал бы из-за собственного sing-box.
+for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
+  listen_port="$p"
+  [[ "$MODE" == "staging" ]] && listen_port=$(( p + STAGING_PORT_OFFSET ))
+  holder=$(ss -tlnp "sport = :${listen_port}" 2>/dev/null \
+    | awk 'NR>1 {print $NF}' | grep -v 'sing-box' | head -1 || true)
+  if [[ -n "$holder" ]]; then
+    echo "ОТКАЗ: порт $listen_port уже занят: $holder" >&2
+    echo "  sing-box не забиндит его и не поднимется — упадут ВСЕ relay-порты." >&2
+    echo "  Уберите $p из RELAY_*_PORTS либо освободите порт." >&2
+    exit 1
+  fi
+done
+
 # Плечо существует ровно тогда, когда существует его физическая опора:
 # primary — израильский узел, secondary — ВМ в Yandex Cloud. Выключенное
 # плечо не попадает ни в конфиг sing-box, ни в опрос монитора.
