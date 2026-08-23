@@ -17,28 +17,42 @@
 #   ./promote.sh --rollback
 set -euo pipefail
 
-CONFIRM_SEC="${CONFIRM_SEC:-900}"
-DNAT_SAVE=/etc/backhaul/dnat-before-promote.rules
+CONFIRM_SEC="${CONFIRM_SEC:-300}"
+DNAT_SAVE=/etc/backhaul/relay-nat.nft
 CFG_SAVE=/etc/backhaul/backhaul-staging.json
 MARK=/etc/backhaul/.promote-pending
+ONLY_PORT=""
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 
 do_rollback() {
-  log "откат: возвращаем DNAT и staging-конфиг relay"
+  log "откат: возвращаем DNAT"
+  # Сначала и безусловно — трафик. Конфиги и проверки потом: сломанный
+  # конфиг не должен мешать вернуть пользователей на рабочий путь.
   if [[ -s "$DNAT_SAVE" ]]; then
-    iptables-restore -T nat < "$DNAT_SAVE" || warn "iptables-restore не отработал"
+    nft delete table ip relay 2>/dev/null || true
+    if nft -f "$DNAT_SAVE"; then
+      log "DNAT восстановлен из ${DNAT_SAVE}"
+    else
+      warn "nft -f не отработал — АВАРИЙНЫЙ РЫЧАГ: systemctl restart nftables"
+    fi
+  else
+    warn "снимок ${DNAT_SAVE} пуст или отсутствует"
+    warn "АВАРИЙНЫЙ РЫЧАГ: systemctl restart nftables"
   fi
+
+  # Только после того, как трафик вернулся, приводим relay в staging-вид.
   if [[ -s "$CFG_SAVE" ]]; then
     cp "$CFG_SAVE" /etc/vpnbot/backhaul.json
     /usr/local/bin/backhaul-monitor -config /etc/vpnbot/backhaul.json -render-relay \
-      > /etc/sing-box-relay/config.json
-    "${SINGBOX_RELAY_BIN:-/usr/local/bin/sing-box}" check -c /etc/sing-box-relay/config.json
-    systemctl restart sing-box-relay backhaul-monitor
+      > /etc/sing-box-relay/config.json || warn "рендер staging-конфига не удался"
+    "${SINGBOX_RELAY_BIN:-/usr/local/bin/sing-box}" check -c /etc/sing-box-relay/config.json \
+      && systemctl restart sing-box-relay backhaul-monitor \
+      || warn "конфиг relay не прошёл проверку — relay оставлен как есть"
   fi
   rm -f "$MARK"
-  log "откат завершён: трафик снова идёт через старый DNAT"
+  log "откат завершён: трафик снова идёт через DNAT"
 }
 
 case "${1:-}" in
@@ -70,8 +84,18 @@ if ! /usr/local/bin/backhaul-monitor -config /etc/vpnbot/backhaul.json -probe; t
 fi
 
 log "снимок текущих правил NAT → ${DNAT_SAVE}"
-iptables-save -t nat > "$DNAT_SAVE"
+# nft, а не iptables: боевой DNAT живёт в table ip relay, а iptables на этой
+# машине собран как legacy и nftables-правил не видит вовсе. Снимок через
+# iptables-save оказывался пустым, и откат был no-op.
+nft list table ip relay > "$DNAT_SAVE"
 chmod 600 "$DNAT_SAVE"
+# Пустой снимок — это отсутствие страховки. Дальше идти нельзя.
+if ! grep -qE 'dnat|redirect' "$DNAT_SAVE"; then
+  echo "ОТКАЗ: снимок ${DNAT_SAVE} не содержит правил dnat/redirect." >&2
+  echo "  Без рабочего снимка откат невозможен. Проверьте: nft list table ip relay" >&2
+  exit 1
+fi
+log "в снимке правил: $(grep -cE 'dnat|redirect' "$DNAT_SAVE")"
 cp /etc/vpnbot/backhaul.json "$CFG_SAVE"
 
 log "регенерация backhaul.json в боевом режиме"
@@ -104,6 +128,15 @@ EOF
 touch "$MARK"
 systemctl daemon-reload
 systemctl start backhaul-promote-rollback.timer
+
+# Таймер — единственная страховка на случай, если оператор потеряет связь с
+# машиной. Не взведён — прод не трогаем.
+if ! systemctl is-active --quiet backhaul-promote-rollback.timer; then
+  echo "ОТКАЗ: таймер автоотката не взведён." >&2
+  echo "  Проверьте: systemctl status backhaul-promote-rollback.timer" >&2
+  exit 1
+fi
+log "таймер автоотката взведён на ${CONFIRM_SEC}с"
 
 log "снимаем DNAT для боевых портов"
 HETZNER_TARGET="${HETZNER_IP}"
