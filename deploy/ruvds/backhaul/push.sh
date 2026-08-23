@@ -41,8 +41,11 @@ scp "${SSH_OPTS[@]}" -q \
   "$SRC/install.sh" "$SRC/render-config.sh" "$SRC/nftables-apply.sh" \
   "$SRC/promote.sh" "$SRC/uninstall.sh" "$BUILD_DIR/backhaul-monitor" \
   "$DEST:/root/backhaul-deploy/"
+# rollback-drill.sh едет вместе с остальным намеренно: доказательство отката
+# должно быть на машине ДО того, как на откат начнут полагаться.
 scp "${SSH_OPTS[@]}" -q "$SRC/../../../scripts/backhaul/verify.sh" \
-  "$SRC/../../../scripts/backhaul/switch.sh" "$DEST:/root/backhaul-deploy/"
+  "$SRC/../../../scripts/backhaul/switch.sh" \
+  "$SRC/../../../scripts/backhaul/rollback-drill.sh" "$DEST:/root/backhaul-deploy/"
 scp "${SSH_OPTS[@]}" -q "$PARAMS" "$DEST:/etc/backhaul/params.env"
 ssh "${SSH_OPTS[@]}" "$DEST" 'chmod 600 /etc/backhaul/params.env; chmod +x /root/backhaul-deploy/*.sh /root/backhaul-deploy/backhaul-monitor'
 
@@ -72,5 +75,6 @@ else
   echo "    cd /root/backhaul-deploy && ./install.sh /etc/backhaul/params.env"
   echo "    ./nftables-apply.sh /etc/backhaul/params.env   # затем --confirm"
   echo "    ./verify.sh /etc/backhaul/params.env"
-  echo "    ./promote.sh /etc/backhaul/params.env          # затем --confirm"
+  echo "    ./rollback-drill.sh                            # доказать откат ДО перевода"
+  echo "    ./promote.sh /etc/backhaul/params.env --only 2058   # канарейка, затем --confirm"
 fi
