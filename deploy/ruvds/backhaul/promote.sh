@@ -68,6 +68,11 @@ case "${1:-}" in
     do_rollback
     exit 0
     ;;
+  --only)
+    [[ -n "${2:-}" ]] || { echo "--only требует номер порта" >&2; exit 1; }
+    ONLY_PORT="$2"
+    shift 2
+    ;;
 esac
 
 PARAMS="${1:-/etc/backhaul/params.env}"
@@ -139,16 +144,34 @@ fi
 log "таймер автоотката взведён на ${CONFIRM_SEC}с"
 
 log "снимаем DNAT для боевых портов"
-HETZNER_TARGET="${HETZNER_IP}"
-for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
-  # Старая схема жила и в iptables (portforward.go), и в nftables
-  # (table ip relay). Чистим обе, молча: чего нет — того нет.
-  iptables -t nat -D PREROUTING -p tcp --dport "$p" -j DNAT \
-    --to-destination "${HETZNER_TARGET}:${p}" 2>/dev/null || true
-  iptables -t nat -D POSTROUTING -d "${HETZNER_TARGET}" -p tcp --dport "$p" \
-    -j MASQUERADE 2>/dev/null || true
-  nft delete rule ip relay prerouting handle \
-    "$(nft -a list table ip relay 2>/dev/null | awk -v p="$p" '/dport '"$p"' dnat/ {print $NF; exit}')" 2>/dev/null || true
+
+# Канарейка: по умолчанию переводим всё, но с --only <порт> двигаем ровно один.
+# Relay уже слушает на боевых портах, поэтому проверить схему можно на одном
+# профиле, не подвергая риску остальные.
+if [[ -n "$ONLY_PORT" ]]; then
+  PROMOTE_PORTS="$ONLY_PORT"
+  found=false
+  for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
+    [[ "$p" == "$ONLY_PORT" ]] && found=true
+  done
+  [[ "$found" == true ]] || {
+    echo "ОТКАЗ: порт $ONLY_PORT не входит в RELAY_*_PORTS" >&2; exit 1; }
+  log "канареечный перевод: только порт $ONLY_PORT"
+else
+  PROMOTE_PORTS="${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}"
+  log "перевод всех портов: $PROMOTE_PORTS"
+fi
+
+for p in ${PROMOTE_PORTS}; do
+  handle=$(nft -a list table ip relay 2>/dev/null \
+    | awk -v p="$p" '$0 ~ "dport " p " (dnat|redirect)" {print $NF; exit}')
+  if [[ -z "$handle" ]]; then
+    warn "порт $p: правило dnat не найдено — возможно, уже переведён"
+    continue
+  fi
+  nft delete rule ip relay prerouting handle "$handle" \
+    || { warn "не удалось удалить правило для $p — откатываюсь"; do_rollback; exit 1; }
+  log "порт $p снят с DNAT (handle $handle)"
 done
 
 log "перезапуск relay на боевых портах"
