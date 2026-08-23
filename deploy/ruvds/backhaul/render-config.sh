@@ -75,7 +75,14 @@ for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
   for pid in $holder_pids; do
     cmdline=""
     [[ -r "/proc/${pid}/cmdline" ]] && cmdline=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
-    if [[ -n "$cmdline" && "$cmdline" == *"${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}"* ]]; then
+    # Границы пути обязательны: без них "/etc/sing-box-relay" совпал бы префиксом
+    # и с "/etc/sing-box-relay2", и с "/etc/sing-box-relay-staging" — та же
+    # ложноотрицательная дыра, что была с именем процесса, просто на уровне
+    # каталога. install.sh поднимает relay юнитом
+    # `ExecStart=${SB_BIN} run -c ${SINGBOX_RELAY_DIR}/config.json`, поэтому
+    # ищем именно "-c <каталог>/" — привязка к реальному флагу запуска плюс
+    # слэш сразу после каталога закрывают и префиксную, и произвольную коллизию.
+    if [[ -n "$cmdline" && "$cmdline" == *"-c ${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}/"* ]]; then
       continue  # это сам relay — не считается чужим занятием порта
     fi
     if [[ -z "$cmdline" ]]; then
