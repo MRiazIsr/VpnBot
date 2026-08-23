@@ -44,7 +44,7 @@ for ru in $RU_DIRECT_EXIT_PORTS; do
     if [[ "$p" == "$ru" ]]; then
       echo "ОТКАЗ: порт $ru попал в список relay." >&2
       echo "  Это профиль с выходом с РУССКОГО адреса; relay уведёт его в Hetzner." >&2
-      echo "  Уберите $ru из RELAY_VLESS_PORTS в params.env." >&2
+      echo "  Уберите $ru из RELAY_VLESS_PORTS/RELAY_MTPROTO_PORTS в params.env." >&2
       exit 1
     fi
   done
@@ -55,21 +55,38 @@ done
 # кладёт ВЕСЬ relay, поэтому проверяем до генерации, а не после рестарта.
 # Пример: 443 держит nginx (ssl_preread по SNI).
 #
-# grep без ^-якоря: `ss -tlnp` кладёт имя процесса не первым полем, а внутрь
-# users:(("sing-box",pid=...,fd=...)) — якорь на начало строки никогда бы не
-# совпал, и повторный запуск render-config.sh на уже поднятом relay ложно
-# отказывал бы из-за собственного sing-box.
+# «Свой» — это ИМЕННО relay, а не любой процесс с именем sing-box: на хосте
+# одновременно живут другие инстансы sing-box (основной vpnbot-конфиг,
+# MTProto-туннели) — у них то же имя в `ss`, но self они не являются, и если
+# бы они держали порт из списка relay, это была бы ровно та коллизия, которую
+# проверка обязана поймать. По имени процесса их не отличить, поэтому self
+# определяем по pid → cmdline: относится ли команда, которой запущен процесс,
+# к SINGBOX_RELAY_DIR (каталогу конфига relay). Если /proc/<pid>/cmdline
+# нечитаем (процесс исчез между вызовом ss и проверкой) — считаем «не свой»
+# и отказываем: закрываемся по умолчанию в сторону безопасности, а не молча
+# пропускаем неизвестный процесс.
 for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
   listen_port="$p"
   [[ "$MODE" == "staging" ]] && listen_port=$(( p + STAGING_PORT_OFFSET ))
-  holder=$(ss -tlnp "sport = :${listen_port}" 2>/dev/null \
-    | awk 'NR>1 {print $NF}' | grep -v 'sing-box' | head -1 || true)
-  if [[ -n "$holder" ]]; then
-    echo "ОТКАЗ: порт $listen_port уже занят: $holder" >&2
+  # ss может вернуть несколько строк-держателей на порт (IPv4/IPv6, SO_REUSEPORT) —
+  # вытаскиваем ВСЕ pid= из всего вывода, а не только с одной строки/поля.
+  holder_pids=$(ss -tlnp "sport = :${listen_port}" 2>/dev/null \
+    | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
+  for pid in $holder_pids; do
+    cmdline=""
+    [[ -r "/proc/${pid}/cmdline" ]] && cmdline=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
+    if [[ -n "$cmdline" && "$cmdline" == *"${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}"* ]]; then
+      continue  # это сам relay — не считается чужим занятием порта
+    fi
+    if [[ -z "$cmdline" ]]; then
+      echo "ОТКАЗ: порт $listen_port занят процессом pid=$pid, но /proc/$pid/cmdline не прочитать (процесс исчез между ss и проверкой) — закрываемся по умолчанию в сторону отказа." >&2
+    else
+      echo "ОТКАЗ: порт $listen_port уже занят чужим процессом pid=$pid: $cmdline" >&2
+    fi
     echo "  sing-box не забиндит его и не поднимется — упадут ВСЕ relay-порты." >&2
     echo "  Уберите $p из RELAY_*_PORTS либо освободите порт." >&2
     exit 1
-  fi
+  done
 done
 
 # Плечо существует ровно тогда, когда существует его физическая опора:
