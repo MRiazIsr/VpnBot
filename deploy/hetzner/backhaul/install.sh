@@ -289,10 +289,22 @@ fi
 # Для dynamic forwarding (-D) PermitOpen проверяет каждый CONNECT, поэтому
 # туннель физически не может открыть ничего постороннего — это строже, чем
 # было в варианте с `ssh -R`.
+#
+# Источник — RELAY_*_PORTS (что переведено на relay), а НЕ PUBLIC_TCP_PORTS
+# (что RuVDS принимает). Это правильно и намеренно: relay ходит на backend
+# только за теми портами, которые обслуживает, и разрешать ему остальные
+# незачем. Обратная сторона — при добавлении порта в RELAY_*_PORTS этот
+# install.sh надо перезапустить на Hetzner, иначе новый порт упрётся в
+# PermitOpen и плечо emergency по нему молча не поедет.
 PERMIT=""
-for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
+for p in ${RELAY_VLESS_PORTS:-} ${RELAY_MTPROTO_PORTS:-}; do
   PERMIT="${PERMIT} ${BACKEND_HOST}:${p}"
 done
+# Эндпоинт измерения. Без него health-checker не может проверить плечо
+# emergency: он ходит на PROBE_LISTEN через SOCKS туннеля, и PermitOpen без
+# этой строки отбивал бы КАЖДУЮ проверку — плечо считалось бы мёртвым всегда,
+# а promote.sh упирался бы в предполётную проверку backhaul'ов.
+PERMIT="${PERMIT} ${PROBE_LISTEN}"
 
 backup /etc/ssh/sshd_config.d/60-backhaul.conf
 mkdir -p /etc/ssh/sshd_config.d
