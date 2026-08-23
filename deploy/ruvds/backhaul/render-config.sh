@@ -2,10 +2,12 @@
 # Генерация /etc/vpnbot/backhaul.json и /etc/sing-box-relay/config.json.
 #
 # Один источник правды для install.sh и promote.sh: конфиг собирается ровно
-# одним кодом, поэтому боевой и staging-режимы не могут разъехаться.
+# одним кодом.
 #
-#   MODE=staging    ./render-config.sh params.env   # порты со смещением
-#   MODE=production ./render-config.sh params.env   # боевые порты
+#   ./render-config.sh params.env            # единственный режим
+#
+# Relay ВСЕГДА слушает смещённые порты (порт + STAGING_PORT_OFFSET). Режима
+# «боевые порты» больше нет — см. отказ ниже.
 set -euo pipefail
 
 PARAMS="${1:-/etc/backhaul/params.env}"
@@ -13,8 +15,38 @@ PARAMS="${1:-/etc/backhaul/params.env}"
 # shellcheck disable=SC1090
 source "$PARAMS"
 
+# Списки могут быть пустыми (RELAY_MTPROTO_PORTS сейчас пуст намеренно —
+# 9443 в первую волну не входит). Нормализуем, чтобы set -u не ронял скрипт.
+RELAY_VLESS_PORTS="${RELAY_VLESS_PORTS:-}"
+RELAY_MTPROTO_PORTS="${RELAY_MTPROTO_PORTS:-}"
+# Хвостовой слэш в каталоге сломал бы самоопознание relay ниже.
+RELAY_DIR="${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}"
+RELAY_DIR="${RELAY_DIR%/}"
+
+# MODE=production убран намеренно, а не забыт.
+#
+# Замысел был такой: relay обкатывается на смещённых портах, потом
+# перегенерируется на боевые и занимает их. Проверка на машине 23.08.2026
+# показала, что занять их нельзя: боевые 2053-2058 уже слушает основной
+# sing-box RuVDS (pid 702, управляется vpnbot), и сейчас это скрыто только тем,
+# что DNAT в prerouting перехватывает пакет раньше локального сокета.
+# Освободить порты значило бы перенастраивать инстанс, который обслуживает
+# профили с русским выходом.
+#
+# Поэтому смещённые порты стали ШТАТНЫМИ и постоянными, а боевой порт
+# заводится на relay правилом `nft ... redirect to :<порт+30000>` (promote.sh).
+# Собрать конфиг с боевыми портами сегодня означает получить sing-box, который
+# не стартует целиком: один занятый listen-порт кладёт ВЕСЬ relay.
 MODE="${MODE:-staging}"
-mkdir -p /etc/vpnbot "${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}" /var/lib/vpnbot
+if [[ "$MODE" != "staging" ]]; then
+  echo "ОТКАЗ: MODE=${MODE} больше не поддерживается." >&2
+  echo "  Relay постоянно живёт на смещённых портах (порт + ${STAGING_PORT_OFFSET:-30000})," >&2
+  echo "  боевой порт заводится на него правилом nft redirect — это делает promote.sh." >&2
+  echo "  Запускайте без MODE:  ./render-config.sh ${PARAMS}" >&2
+  echo "  Схема целиком: docs/backhaul-triple.md, раздел «Как боевой порт попадает на relay»." >&2
+  exit 1
+fi
+mkdir -p /etc/vpnbot "${RELAY_DIR}" /var/lib/vpnbot
 
 # ─────────────────────── защита прямых профилей ───────────────────────
 # DE-VK (4443), DE-Yandex (8444), DE-Sber (8447) ходят напрямую в Hetzner мимо
@@ -66,8 +98,8 @@ done
 # и отказываем: закрываемся по умолчанию в сторону безопасности, а не молча
 # пропускаем неизвестный процесс.
 for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
-  listen_port="$p"
-  [[ "$MODE" == "staging" ]] && listen_port=$(( p + STAGING_PORT_OFFSET ))
+  # Relay всегда на смещённом порту: боевой занят основным sing-box.
+  listen_port=$(( p + STAGING_PORT_OFFSET ))
   # ss может вернуть несколько строк-держателей на порт (IPv4/IPv6, SO_REUSEPORT) —
   # вытаскиваем ВСЕ pid= из всего вывода, а не только с одной строки/поля.
   holder_pids=$(ss -tlnp "sport = :${listen_port}" 2>/dev/null \
@@ -82,7 +114,7 @@ for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
     # `ExecStart=${SB_BIN} run -c ${SINGBOX_RELAY_DIR}/config.json`, поэтому
     # ищем именно "-c <каталог>/" — привязка к реальному флагу запуска плюс
     # слэш сразу после каталога закрывают и префиксную, и произвольную коллизию.
-    if [[ -n "$cmdline" && "$cmdline" == *"-c ${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}/"* ]]; then
+    if [[ -n "$cmdline" && "$cmdline" == *"-c ${RELAY_DIR}/"* ]]; then
       continue  # это сам relay — не считается чужим занятием порта
     fi
     if [[ -z "$cmdline" ]]; then
@@ -91,7 +123,10 @@ for p in ${RELAY_VLESS_PORTS} ${RELAY_MTPROTO_PORTS}; do
       echo "ОТКАЗ: порт $listen_port уже занят чужим процессом pid=$pid: $cmdline" >&2
     fi
     echo "  sing-box не забиндит его и не поднимется — упадут ВСЕ relay-порты." >&2
-    echo "  Уберите $p из RELAY_*_PORTS либо освободите порт." >&2
+    echo "  Речь о СМЕЩЁННОМ порту ${listen_port} (боевой ${p} + ${STAGING_PORT_OFFSET})." >&2
+    echo "  Боевой порт ${p} освобождать НЕ нужно и нельзя: relay на него не садится," >&2
+    echo "  трафик приводит правило nft redirect (promote.sh)." >&2
+    echo "  Освободите ${listen_port} либо уберите ${p} из RELAY_*_PORTS." >&2
     exit 1
   done
 done
@@ -106,7 +141,7 @@ if [[ "$PRIMARY_DISABLED_JSON" == "true" && "$SECONDARY_DISABLED_JSON" == "true"
   echo "внимание: включён только emergency — резерва нет, это стартовая конфигурация" >&2
 fi
 
-MODE="$MODE" PRIMARY_DISABLED_JSON="$PRIMARY_DISABLED_JSON" \
+PRIMARY_DISABLED_JSON="$PRIMARY_DISABLED_JSON" \
 SECONDARY_DISABLED_JSON="$SECONDARY_DISABLED_JSON" \
 STAGING_PORT_OFFSET="$STAGING_PORT_OFFSET" \
 RELAY_VLESS_PORTS="$RELAY_VLESS_PORTS" RELAY_MTPROTO_PORTS="$RELAY_MTPROTO_PORTS" \
@@ -121,19 +156,19 @@ PROBE_STALL_SEC="$PROBE_STALL_SEC" PROBE_MIN_BPS="$PROBE_MIN_BPS" \
 PROBE_INTERVAL_SEC="$PROBE_INTERVAL_SEC" PROBE_FAIL_THRESHOLD="$PROBE_FAIL_THRESHOLD" \
 PROBE_RECOVER_THRESHOLD="$PROBE_RECOVER_THRESHOLD" PROBE_HOLD_DOWN_SEC="$PROBE_HOLD_DOWN_SEC" \
 PROBE_STABLE_BEFORE_RETURN_SEC="$PROBE_STABLE_BEFORE_RETURN_SEC" \
-SINGBOX_RELAY_DIR="${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}" \
+SINGBOX_RELAY_DIR="${RELAY_DIR}" \
 python3 <<'PY'
 import json, os
 
 env = os.environ
-mode = env["MODE"]
-staged = (mode == "staging")
 offset = int(env["STAGING_PORT_OFFSET"])
 
 def entries(ports, cls):
     out = []
     for p in (int(x) for x in ports.split()):
-        listen = p + offset if staged else p
+        # Смещение безусловно: боевой порт занят основным sing-box RuVDS,
+        # relay живёт на порт+offset постоянно (см. отказ на MODE выше).
+        listen = p + offset
         out.append({
             "tag": f"in-{cls}-{listen}",
             "class": cls,
@@ -142,7 +177,7 @@ def entries(ports, cls):
             # там уже слушают на всех адресах, значит и на адресе wg1. Дублировать
             # inbound'ы с теми же ключами Reality не нужно и рискованно.
             "target_port": p,
-            "comment": ("staging " if staged else "") + f"{cls} {p}",
+            "comment": f"relay {cls} {p} (боевой {p} → redirect → :{listen})",
         })
     return out
 
@@ -196,16 +231,17 @@ with open("/etc/vpnbot/backhaul.json", "w") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
     f.write("\n")
 active = [t["name"] for t in cfg["tiers"] if not t.get("disabled")]
-print(f"backhaul.json: режим={mode}, портов={len(ports)}, активные плечи: {', '.join(active)}")
+print(f"backhaul.json: портов={len(ports)} (relay слушает порт+{offset}), "
+      f"активные плечи: {', '.join(active)}")
 PY
 
 chmod 600 /etc/vpnbot/backhaul.json
 
 /usr/local/bin/backhaul-monitor -config /etc/vpnbot/backhaul.json -render-relay \
-  > "${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}/config.json"
-chmod 600 "${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}/config.json"
+  > "${RELAY_DIR}/config.json"
+chmod 600 "${RELAY_DIR}/config.json"
 
 # Требование: после изменений обязательно sing-box check.
 "${SINGBOX_RELAY_BIN:-/usr/local/bin/sing-box}" check \
-  -c "${SINGBOX_RELAY_DIR:-/etc/sing-box-relay}/config.json"
+  -c "${RELAY_DIR}/config.json"
 echo "sing-box check: OK"

@@ -2,15 +2,18 @@
 # Установка фронтенд-стороны тройного backhaul на RuVDS.
 #
 # ВАЖНО ПРО ПОРЯДОК: этот скрипт НЕ трогает боевые порты и НЕ снимает старый
-# DNAT. Relay поднимается на смещённых (staging) портах, чтобы прогнать полный
-# end-to-end параллельно работающему проду. Перевод боевых портов — отдельный
-# шаг, promote.sh, с автоматическим откатом.
+# DNAT. Relay поднимается на смещённых портах (порт+STAGING_PORT_OFFSET) и
+# остаётся на них НАВСЕГДА: боевые порты 2053-2058 занимает основной sing-box
+# RuVDS, освободить их нельзя. Смещённые порты позволяют прогнать полный
+# end-to-end параллельно работающему проду, а боевой порт заводится на relay
+# отдельным шагом — promote.sh заменяет dnat на `redirect to :<порт+30000>`,
+# с автоматическим откатом.
 #
 # Ставит:
 #   1. frps            — точка входа для израильского узла (он за CGNAT);
 #   2. sing-box-bh2    — адаптер secondary: SOCKS5 → vless+ws → Yandex Cloud → Hetzner;
 #   3. SSH-туннель emergency: RuVDS → Hetzner (`ssh -D`), SOCKS5 на loopback;
-#   4. sing-box-relay  — сам L4-relay (staging-порты);
+#   4. sing-box-relay  — сам L4-relay (смещённые порты, +STAGING_PORT_OFFSET);
 #   5. backhaul-monitor — health checker с гистерезисом;
 #   6. nftables        — default deny, ничего лишнего наружу.
 #
@@ -329,7 +332,7 @@ log "публичный ключ для Hetzner (RUVDS_TUNNEL_PUBKEY в params.e
 cat "${SSH_KEY_PATH}.pub"
 
 # ───────────────────── 4. relay + конфиг backhaul ─────────────────────
-log "backhaul.json + sing-box-relay (staging-порты, смещение ${STAGING_PORT_OFFSET})"
+log "backhaul.json + sing-box-relay (смещённые порты, +${STAGING_PORT_OFFSET} — это штатный режим)"
 # Бинарь приезжает рядом со скриптом (его кладёт push.sh с Hetzner).
 # /opt/VpnBot/bin — запасной путь на случай ручной раскладки.
 BH_BIN=""
@@ -345,8 +348,10 @@ mkdir -p /etc/vpnbot "${SINGBOX_RELAY_DIR}" /var/lib/sing-box-relay
 if [[ "${PRIMARY_ENABLED:-false}" != "true" ]]; then
   warn "primary выключен (PRIMARY_ENABLED=false): активны secondary и emergency"
 fi
-# Единый генератор для staging и прода — чтобы режимы не разъехались.
-MODE="${MODE:-staging}" "$(dirname "$0")/render-config.sh" "$PARAMS"
+# Единый генератор конфигов. Режима «боевые порты» у него нет: relay всегда
+# слушает порт+STAGING_PORT_OFFSET, а боевой порт заводится на него правилом
+# nft redirect (promote.sh). MODE наружу не пробрасывается намеренно.
+"$(dirname "$0")/render-config.sh" "$PARAMS"
 
 backup /etc/systemd/system/sing-box-relay.service
 cat > /etc/systemd/system/sing-box-relay.service <<EOF
@@ -447,4 +452,5 @@ systemctl enable --now backhaul-fssh@vless.service backhaul-fssh@mtproto.service
 systemctl enable --now backhaul-monitor.service
 
 log "готово. Бэкапы: ${BACKUP_DIR}"
-log "дальше: 1) ./nftables-apply.sh  2) scripts/backhaul/verify.sh  3) ./promote.sh"
+log "дальше: 1) ./nftables-apply.sh  2) scripts/backhaul/verify.sh"
+log "        3) scripts/backhaul/rollback-drill.sh  4) ./promote.sh params.env --only 2058"
