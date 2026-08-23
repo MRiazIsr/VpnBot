@@ -49,9 +49,9 @@
 **Interfaces:**
 - Produces: `do_rollback()` восстанавливает `table ip relay` из `/etc/backhaul/relay-nat.nft`; `snapshot_dnat()` пишет этот файл и завершается ошибкой при пустом снимке.
 
-- [ ] **Step 1: Написать учебный прогон, который сейчас провалится**
+- [ ] **Step 1: Написать учебный прогон механики отката**
 
-Создать `scripts/backhaul/rollback-drill.sh`. Он проверяет механизм снимка и восстановления на **служебной таблице** `ip bh_drill`, не касаясь боевых правил:
+Создать `scripts/backhaul/rollback-drill.sh`. Это не красный тест: он проверяет механику снимка и восстановления nft напрямую и должен пройти сразу. Смысл — доказать, что механизм, на который мы переводим откат, работает на этой машине. Работает на **служебной таблице** `ip bh_drill`, не касаясь боевых правил:
 
 ```bash
 #!/usr/bin/env bash
@@ -629,7 +629,7 @@ AnyTLS занимает слот `primary` (`Rank=1`). Слот свободен
 
 **Interfaces:**
 - Consumes: `BACKEND_HOST`, `FRP_SOCKS_VLESS_PORT` (11080), `FRP_SOCKS_MTPROTO_PORT` (11090) — слот primary.
-- Produces: `ANYTLS_PORT`, `ANYTLS_PASSWORD`, `ANYTLS_SNI` в params; сервис `sing-box-bh-anytls` на RuVDS; inbound `anytls` на Hetzner.
+- Produces: `ANYTLS_PORT`, `ANYTLS_PASSWORD`, `ANYTLS_SNI`, `ANYTLS_REALITY_PRIVATE`, `ANYTLS_REALITY_PUBLIC`, `ANYTLS_REALITY_SHORT_ID` в params; сервис `sing-box-bh-anytls` на RuVDS; inbound `anytls` поверх Reality на Hetzner.
 
 - [ ] **Step 1: Добавить параметры**
 
