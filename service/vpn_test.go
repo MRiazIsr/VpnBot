@@ -340,3 +340,25 @@ func TestGenerateLinkForInbound_ShadowTLS(t *testing.T) {
 		t.Fatalf("expected outer password URL-encoded, got %s", link)
 	}
 }
+
+// Пустой Fingerprint у Reality-инбаунда должен давать fp=chrome: "random"
+// заставляет uTLS выбирать профиль случайно, включая редкие и устаревшие,
+// что само по себе выделяет клиента.
+func TestGenerateLinkForInbound_DefaultFingerprintIsChrome(t *testing.T) {
+	ib := database.InboundConfig{
+		Tag:              "DE-TCP",
+		Protocol:         "vless",
+		ListenPort:       2054,
+		TLSType:          "reality",
+		SNI:              "cdn.moskva.live",
+		UserType:         "new",
+		RealityPublicKey: "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
+		RealityShortIDs:  database.JSONStringArray{"207fc82a9f9e741f"},
+		// Fingerprint намеренно не задан.
+	}
+	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
+	link := GenerateLinkForInbound(ib, user, "cdn.moskva.live")
+	if !strings.Contains(link, "fp=chrome") {
+		t.Fatalf("expected fp=chrome for unset fingerprint, got %s", link)
+	}
+}

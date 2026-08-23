@@ -523,9 +523,12 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 		return generateShadowTLSLink(ib, user, serverAddr)
 	}
 
+	// "chrome", а не "random": random заставляет uTLS выбирать профиль
+	// случайно, включая редкие и устаревшие, — по такому ClientHello клиент
+	// выделяется вместо того, чтобы слиться с обычным браузерным трафиком.
 	fingerprint := ib.Fingerprint
 	if fingerprint == "" {
-		fingerprint = "random"
+		fingerprint = "chrome"
 	}
 
 	switch ib.Protocol {

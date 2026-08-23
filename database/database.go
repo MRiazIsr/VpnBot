@@ -269,6 +269,9 @@ func Init(path string) {
 	// Одноразовая миграция: перенос Reality-ключей из system_settings в inbound_configs
 	migrateRealityKeysFromSettings()
 
+	// Идемпотентная миграция: uTLS-фингерпринт random -> chrome
+	migrateFingerprintToChrome()
+
 	// 1. Инициализация твоего существующего юзера MRiaz
 	var oldUser User
 	if result := DB.Where("username = ?", "MRiaz").First(&oldUser); result.Error != nil {
@@ -306,7 +309,7 @@ func Init(path string) {
 				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
 				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
 				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
-				Fingerprint:       "random",
+				Fingerprint:       "chrome",
 			},
 			{
 				Tag:               "vless-in-h2",
@@ -325,7 +328,7 @@ func Init(path string) {
 				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
 				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
 				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
-				Fingerprint:       "random",
+				Fingerprint:       "chrome",
 			},
 			{
 				Tag:         "hy2-in",
@@ -361,7 +364,7 @@ func Init(path string) {
 				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
 				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
 				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
-				Fingerprint:       "random",
+				Fingerprint:       "chrome",
 			},
 		}
 		for _, ib := range builtins {
@@ -478,7 +481,7 @@ func migrateRealityKeysFromSettings() {
 
 	fingerprint := result.Fingerprint
 	if fingerprint == "" {
-		fingerprint = "random"
+		fingerprint = "chrome"
 	}
 
 	log.Println("Migration: copying Reality keys from system_settings to inbound_configs...")
@@ -490,6 +493,28 @@ func migrateRealityKeysFromSettings() {
 			"reality_short_ids":   shortIDs,
 			"fingerprint":         fingerprint,
 		})
+}
+
+// migrateFingerprintToChrome переводит Reality-инбаунды с "random" (и с пустым
+// значением) на "chrome". Идемпотентна: повторный запуск не находит строк.
+//
+// Правки сида на прод не влияют — сид выполняется только на пустой таблице, а
+// боевые записи заведены давно. Поэтому значение меняется здесь.
+//
+// Fingerprint не попадает в конфиг sing-box, только в параметр fp= подписочной
+// ссылки, поэтому правка не рвёт установленные соединения: клиенты подхватят
+// её при очередном обновлении подписки.
+func migrateFingerprintToChrome() {
+	res := DB.Model(&InboundConfig{}).
+		Where("tls_type = ? AND fingerprint IN ?", "reality", []string{"", "random"}).
+		Update("fingerprint", "chrome")
+	if res.Error != nil {
+		log.Println("Migration: fingerprint -> chrome failed:", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("Migration: fingerprint random -> chrome на %d инбаундах", res.RowsAffected)
+	}
 }
 
 // Helper: Создать токен

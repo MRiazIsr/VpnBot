@@ -1,4 +1,4 @@
-// Package health detects when inbounds/telemt stop passing connections
+// Package health detects when inbounds stop passing connections
 // and computes OK/DEGRADATION/DOWN transitions. Pure: no Telegram/network.
 package health
 
@@ -27,7 +27,7 @@ func (s Status) String() string {
 
 // SignalResult is one service's observation for one cycle.
 type SignalResult struct {
-	Service string // stable id, e.g. "inbound:2056" or "telemt"
+	Service string // stable id, e.g. "inbound:2056"
 	Label   string // human name for messages, e.g. "VLESS 2056 (xhttp-vk)"
 	Bad     bool   // connections are NOT passing (active failure / unreachable)
 	Partial bool   // one leg up, the other down (early warning)

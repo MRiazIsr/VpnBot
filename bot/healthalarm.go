@@ -50,7 +50,7 @@ func runHealthAlarm(b *tele.Bot) {
 			interval = 60
 		}
 		prev := loadSnapshot()
-		signals := health.Collect(interval)
+		signals := health.Collect()
 		cur, transitions := health.Evaluate(prev, signals,
 			health.Config{DownHysteresis: hc.DownHysteresis}, time.Now())
 		saveSnapshot(cur)
