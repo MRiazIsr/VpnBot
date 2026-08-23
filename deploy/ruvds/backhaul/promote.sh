@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Перевод боевых портов RuVDS со старого DNAT на relay — с автооткатом.
 #
-# До этого шага relay живёт на staging-портах и прод не задет вообще.
-# Здесь мы:
+# Relay уже слушает свои offset-порты (порт+30000) и остаётся на них навсегда
+# — этот скрипт его конфиг не трогает, он трогает только nft. Здесь мы:
 #   1. снимаем снимок текущего DNAT (чтобы было чем откатываться);
-#   2. регенерируем backhaul.json в боевом режиме (порты без смещения);
-#   3. sing-box check;
-#   4. ставим таймер автоотката;
-#   5. заменяем DNAT на relay-порту боевых портов правилом redirect и
-#      перезапускаем relay;
-#   6. ждём подтверждения оператора.
+#   2. sing-box check — конфиг relay не регенерируется, но убедиться, что то,
+#      что уже на диске, валидно, до переключения на него боевого трафика — не лишнее;
+#   3. ставим таймер автоотката;
+#   4. заменяем DNAT на боевых портах правилом redirect на relay-порт;
+#   5. ждём подтверждения оператора.
 #
 # Без `--confirm` в течение CONFIRM_SEC всё вернётся к DNAT автоматически.
 #
@@ -20,7 +19,6 @@ set -euo pipefail
 
 CONFIRM_SEC="${CONFIRM_SEC:-300}"
 DNAT_SAVE=/etc/backhaul/relay-nat.nft
-CFG_SAVE=/etc/backhaul/backhaul-staging.json
 MARK=/etc/backhaul/.promote-pending
 ONLY_PORT=""
 
@@ -53,15 +51,14 @@ do_rollback() {
     warn "АВАРИЙНЫЙ РЫЧАГ: systemctl restart nftables"
   fi
 
-  # Только после того, как трафик вернулся, приводим relay в staging-вид.
-  if [[ -s "$CFG_SAVE" ]]; then
-    cp "$CFG_SAVE" /etc/vpnbot/backhaul.json
-    /usr/local/bin/backhaul-monitor -config /etc/vpnbot/backhaul.json -render-relay \
-      > /etc/sing-box-relay/config.json || warn "рендер staging-конфига не удался"
-    "${SINGBOX_RELAY_BIN:-/usr/local/bin/sing-box}" check -c /etc/sing-box-relay/config.json \
-      && systemctl restart sing-box-relay backhaul-monitor \
-      || warn "конфиг relay не прошёл проверку — relay оставлен как есть"
-  fi
+  # Конфиг relay (/etc/vpnbot/backhaul.json, /etc/sing-box-relay/config.json)
+  # promote.sh не меняет: offset-порты штатные, а не временный staging перед
+  # переездом на боевые — регенерации в боевом режиме больше нет (см. выше).
+  # Значит relay и backhaul-monitor всё это время работали без остановки, и
+  # восстанавливать/перезапускать их при откате нечего и незачем — а
+  # перезапуск здесь был бы прямо вреден: откат это момент, когда мы
+  # возвращаем сервис, а не тревожим его. Всё, что нужно откату — уже сделано
+  # выше: nft-таблица вернулась к DNAT.
   rm -f "$MARK"
   log "откат завершён: трафик снова идёт через DNAT"
 }
@@ -112,12 +109,12 @@ if ! grep -qE 'dnat|redirect' "$DNAT_SAVE"; then
   exit 1
 fi
 log "в снимке правил: $(grep -cE 'dnat|redirect' "$DNAT_SAVE")"
-cp /etc/vpnbot/backhaul.json "$CFG_SAVE"
 
-log "регенерация backhaul.json в боевом режиме"
-MODE=production "$(dirname "$0")/render-config.sh" "$PARAMS"
-
-log "sing-box check"
+# Конфиг relay не регенерируется: offset-порты (порт+30000) штатные с
+# установки и promote.sh их не трогает — переводит только nft. Проверка
+# ниже — предполётная: убедиться, что то, что уже лежит на диске, валидно,
+# прежде чем направить на него боевой трафик, а не подтверждение регенерации.
+log "sing-box check (конфиг relay не менялся)"
 "${SINGBOX_RELAY_BIN:-/usr/local/bin/sing-box}" check -c /etc/sing-box-relay/config.json
 
 # Таймер отката ставим ДО того, как трогать прод.
@@ -157,7 +154,8 @@ log "таймер автоотката взведён на ${CONFIRM_SEC}с"
 log "переводим боевые порты с DNAT на relay (redirect)"
 
 # Канарейка: по умолчанию переводим всё, но с --only <порт> двигаем ровно один.
-# Relay уже слушает на боевых портах, поэтому проверить схему можно на одном
+# Relay уже поднят и слушает свои offset-порты (порт+30000) — перевод порта
+# это редирект боевого порта на него, поэтому проверить схему можно на одном
 # профиле, не подвергая риску остальные.
 if [[ -n "$ONLY_PORT" ]]; then
   PROMOTE_PORTS="$ONLY_PORT"
@@ -219,10 +217,12 @@ for p in ${PROMOTE_PORTS}; do
   log "порт $p переведён на relay :$relay_port (redirect, handle $handle)"
 done
 
-log "перезапуск relay на боевых портах"
-systemctl restart sing-box-relay
-sleep 2
-systemctl restart backhaul-monitor
+# Ни sing-box-relay, ни backhaul-monitor не перезапускаются: их конфиги не
+# менялись (offset-порты штатные, backhaul.json promote.sh не трогает) —
+# сменились только nft-правила, а это состояние ядра, никак не связанное с
+# тем, что уже слушает relay. Перезапуск тут ничего не чинит, зато рвёт все
+# соединения, которые уже идут через relay. Статус ниже — просто наблюдение.
+log "проверка: relay уже слушает свои порты, рестарт не требуется"
 systemctl --no-pager --lines=5 status sing-box-relay || true
 
 warn "У вас ${CONFIRM_SEC}с на проверку живым клиентом."
