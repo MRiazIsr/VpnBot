@@ -41,7 +41,9 @@ func GetSubscription() gin.HandlerFunc {
 			if ib.Protocol == "mask" {
 				continue
 			}
-			links = append(links, service.GenerateLinkForInbound(ib, user, serverIP))
+			if link := service.GenerateLinkForInbound(ib, user, serverIP); link != "" {
+				links = append(links, link)
+			}
 		}
 
 		body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
@@ -85,7 +87,9 @@ func GetSubscriptionRuVDS() gin.HandlerFunc {
 			// Используем RuVDS IP вместо ServerAddress/SERVER_IP — клиент пойдёт на RuVDS.
 			ibCopy := ib
 			ibCopy.ServerAddress = "" // сбрасываем override чтобы serverAddr-параметр сработал
-			links = append(links, service.GenerateLinkForInbound(ibCopy, user, ruvdsIP))
+			if link := service.GenerateLinkForInbound(ibCopy, user, ruvdsIP); link != "" {
+				links = append(links, link)
+			}
 		}
 
 		body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
