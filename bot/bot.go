@@ -252,7 +252,11 @@ func Start(token string, adminID int64) {
 		if err != nil {
 			return c.Send(err.Error())
 		}
-		link := service.GenerateLinkForInbound(ib, user, linkServerAddr(ib))
+		addr := linkServerAddr(ib)
+		if addr == "" {
+			return c.Send(maskUnavailableMsg)
+		}
+		link := service.GenerateLinkForInbound(ib, user, addr)
 		if link == "" {
 			return c.Send("❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден.")
 		}
@@ -267,7 +271,11 @@ func Start(token string, adminID int64) {
 		if err != nil {
 			return c.Send(err.Error())
 		}
-		link := service.GenerateLinkForInbound(ib, user, linkServerAddr(ib))
+		addr := linkServerAddr(ib)
+		if addr == "" {
+			return c.Send(maskUnavailableMsg)
+		}
+		link := service.GenerateLinkForInbound(ib, user, addr)
 		if link == "" {
 			return c.Send("❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден.")
 		}
@@ -686,6 +694,10 @@ func getInboundAndUser(c tele.Context) (database.InboundConfig, database.User, e
 
 	return ib, user, nil
 }
+
+// maskUnavailableMsg — RUVDS_IP не задан, поэтому mask-инбаунду некуда
+// указывать ссылку (linkServerAddr вернёт "" — единственный такой случай).
+const maskUnavailableMsg = "❌ RUVDS_IP не задан — маска недоступна."
 
 // linkServerAddr — адрес сервера для ссылки инбаунда. Mask-инбаунды живут
 // только на RuVDS (Xray-сайдкар), остальные — как раньше, через ServerIP.
