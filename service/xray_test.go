@@ -121,3 +121,41 @@ func TestBuildXrayConfig_BadMaskJSON(t *testing.T) {
 		t.Fatal("expected error for mask JSON without tcp")
 	}
 }
+
+func TestGenerateMaskLink(t *testing.T) {
+	inner, mask := maskFixture()
+	inner.RealityPublicKey = "PUBKEY"
+	inner.SNI = "gosuslugi.ru"
+	inner.RealityShortIDs = database.JSONStringArray{"caa7f714"}
+	inner.Flow = "xtls-rprx-vision"
+	inner.ServerAddress = "hetzner.example" // должен быть проигнорирован
+	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
+
+	link := GenerateMaskLink(mask, inner, user, "198.51.100.7")
+
+	if !strings.HasPrefix(link, "vless://550e8400-e29b-41d4-a716-446655440000@198.51.100.7:2071?") {
+		t.Fatalf("expected inner uuid + mask port, got %s", link)
+	}
+	for _, want := range []string{"security=reality", "pbk=PUBKEY", "sni=gosuslugi.ru", "sid=caa7f714", "flow=xtls-rprx-vision"} {
+		if !strings.Contains(link, want) {
+			t.Errorf("missing %s in %s", want, link)
+		}
+	}
+	// fm = URL-encoded компактный JSON блока finalmask (формат v2rayN/v2rayNG).
+	if !strings.Contains(link, "fm=%7B%22tcp%22%3A%5B%7B%22type%22%3A%22sudoku%22") {
+		t.Errorf("expected url-encoded fm, got %s", link)
+	}
+	if !strings.HasSuffix(link, "#RU-MASK") {
+		t.Errorf("expected #RU-MASK fragment, got %s", link)
+	}
+	if strings.Contains(link, "hetzner.example") || strings.Contains(link, ":2060") {
+		t.Errorf("inner address/port leaked: %s", link)
+	}
+}
+
+func TestGenerateLinkForInbound_MaskWithoutDB(t *testing.T) {
+	_, mask := maskFixture()
+	if got := GenerateLinkForInbound(mask, database.User{}, "198.51.100.7"); got != "" {
+		t.Fatalf("expected empty link without DB, got %q", got)
+	}
+}

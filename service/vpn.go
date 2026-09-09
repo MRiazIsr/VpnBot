@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -541,6 +542,14 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 		serverAddr = ib.ServerAddress
 	}
 
+	if ib.Protocol == "mask" {
+		inner, ok := lookupInboundByTag(ib.MaskInnerTag)
+		if !ok {
+			return ""
+		}
+		return GenerateMaskLink(ib, inner, user, serverAddr)
+	}
+
 	if ib.Protocol == "shadowtls" {
 		return generateShadowTLSLink(ib, user, serverAddr)
 	}
@@ -642,6 +651,43 @@ func generateShadowTLSLink(ib database.InboundConfig, _ database.User, serverAdd
 		RawQuery: q.Encode(),
 		Fragment: ib.Tag,
 	}
+	return u.String()
+}
+
+// lookupInboundByTag — внутренний инбаунд маски из БД. false — если БД не
+// инициализирована (юнит-тесты) или тег не найден.
+func lookupInboundByTag(tag string) (database.InboundConfig, bool) {
+	if database.DB == nil || tag == "" {
+		return database.InboundConfig{}, false
+	}
+	var ib database.InboundConfig
+	if err := database.DB.Where("tag = ?", tag).First(&ib).Error; err != nil {
+		return database.InboundConfig{}, false
+	}
+	return ib, true
+}
+
+// GenerateMaskLink — ссылка внутреннего VLESS-инбаунда с портом маски и
+// параметром fm. Формат fm (v2rayN BaseFmt.cs, v2rayNG FmtBase.kt):
+// компактный JSON блока finalmask, URL-encoded. Понимают только
+// Xray-клиенты: v2rayNG, v2rayN, Happ, Streisand.
+func GenerateMaskLink(mask, inner database.InboundConfig, user database.User, serverAddr string) string {
+	inner.ServerAddress = "" // адрес маски — тот, что передан (RuVDS), не override внутреннего
+	innerLink := GenerateLinkForInbound(inner, user, serverAddr)
+	u, err := url.Parse(innerLink)
+	if err != nil || u.Scheme != "vless" {
+		return ""
+	}
+	u.Host = fmt.Sprintf("%s:%d", serverAddr, mask.ListenPort)
+
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(mask.MaskJSON)); err != nil {
+		return ""
+	}
+	q := u.Query()
+	q.Set("fm", compact.String())
+	u.RawQuery = q.Encode()
+	u.Fragment = mask.Tag
 	return u.String()
 }
 
