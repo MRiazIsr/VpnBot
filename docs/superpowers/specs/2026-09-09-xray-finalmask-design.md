@@ -173,7 +173,8 @@ mask-инбаунда содержит порт маски и `fm`. Стенд �
 5. `GET /sub-ruvds/<token>` → в base64 есть строка `vless://…@<RUVDS_IP>:2071?…fm=%7B%22tcp%22…#RU-MASK`; `GET /sub/<token>` этой строки НЕ содержит.
 6. v2rayNG (тестер в РФ, инструкция по UI): импорт ссылки → подключение → открыть 2ip.ru, ожидается российский IP RuVDS. На RuVDS `journalctl -u sing-box` показывает `inbound connection from 127.0.0.1`.
 7. Hiddify с той же ссылкой НЕ подключается — ожидаемо.
-8. `PUT /api/inbounds/<id>` с `{"enabled": false}` → `GET /api/xray/ruvds/status` → `stopped` (DeployXrayConfigRuVDS(nil) остановил сервис).
+8. `PUT /api/inbounds/<id RU-MASK>/toggle` (без тела — маршрут сам инвертирует `enabled`) → `GET /api/xray/ruvds/status` → `stopped` (DeployXrayConfigRuVDS(nil) остановил сервис).
+9. Отключить внутренний инбаунд `vless-direct-tcp` через `PUT /api/inbounds/<id vless-direct-tcp>/toggle` при включённой маске → 400 с перечислением зависимых масок.
 
 Статус: код этапа 1 реализован 2026-09-09 (ветка feature/xray-mask-ruvds), ручная верификация на проде не проводилась.
 

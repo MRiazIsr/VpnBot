@@ -126,7 +126,7 @@ Manual verification remains critical for changes affecting sing-box behavior —
 - WireGuard: `/api/wireguard/{config,setup,restart,stop,status}` — управление wg-quick@wg0 на Hetzner
 - Sing-box RuVDS: `/api/singbox/ruvds/{setup,reload,start,stop,status,config}` — управление зеркалом sing-box на RuVDS через SSH
 - Telemt RuVDS: `/api/telemt/ruvds/{setup,reload,start,stop,status}` — управление зеркалом MTProto на RuVDS через SSH
-- Xray RuVDS: `/api/xray/ruvds/{setup,reload,start,stop,status,config,logs}` — Xray finalmask sidecar on RuVDS (pinned `service.XrayVersion`). `reload` = the same as singbox reload (sing-box first, then Xray; Xray has no hot reload, the service is restarted).
+- Xray RuVDS: `/api/xray/ruvds/{setup,reload,start,stop,status,config,logs}` — Xray finalmask sidecar on RuVDS (pinned `service.XrayVersion`). `reload` = the same as singbox reload (sing-box first, then Xray; Xray has no hot reload, the service is restarted). Adding a new mask inbound after the initial setup requires calling `POST /api/xray/ruvds/setup` again (idempotent) to open its port in ufw.
 
 Server listens on `:8085` (proxied via Caddy on `<API_DOMAIN>:8443`).
 
