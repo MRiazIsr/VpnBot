@@ -189,8 +189,12 @@ func Start(token string, adminID int64) {
 
 		// Individual inbound buttons
 		for _, ib := range inbounds {
-			btnLink := connectMenu.Data(fmt.Sprintf("🔗 %s", ib.DisplayName), "conn_link", fmt.Sprintf("%d", ib.ID))
-			btnQR := connectMenu.Data(fmt.Sprintf("📷 %s", ib.DisplayName), "conn_qr", fmt.Sprintf("%d", ib.ID))
+			label := ib.DisplayName
+			if ib.Protocol == "mask" {
+				label = ib.DisplayName + " (v2rayNG/Happ)"
+			}
+			btnLink := connectMenu.Data(fmt.Sprintf("🔗 %s", label), "conn_link", fmt.Sprintf("%d", ib.ID))
+			btnQR := connectMenu.Data(fmt.Sprintf("📷 %s", label), "conn_qr", fmt.Sprintf("%d", ib.ID))
 			rows = append(rows, connectMenu.Row(btnLink, btnQR))
 		}
 		// Кнопка VK TURN Tunnel (если включён)
@@ -248,7 +252,13 @@ func Start(token string, adminID int64) {
 		if err != nil {
 			return c.Send(err.Error())
 		}
-		link := service.GenerateLinkForInbound(ib, user, ServerIP)
+		link := service.GenerateLinkForInbound(ib, user, linkServerAddr(ib))
+		if link == "" {
+			return c.Send("❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден.")
+		}
+		if ib.Protocol == "mask" {
+			return c.Send(fmt.Sprintf("`%s`\n\n⚠️ Ссылка только для v2rayNG, v2rayN, Happ или Streisand. Hiddify и Shadowrocket её не поймут.", link), tele.ModeMarkdown)
+		}
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
 	})
 
@@ -257,14 +267,17 @@ func Start(token string, adminID int64) {
 		if err != nil {
 			return c.Send(err.Error())
 		}
-		link := service.GenerateLinkForInbound(ib, user, ServerIP)
+		link := service.GenerateLinkForInbound(ib, user, linkServerAddr(ib))
+		if link == "" {
+			return c.Send("❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден.")
+		}
 
 		qr, qrErr := qrcode.Encode(link, qrcode.Medium, 256)
 		if qrErr != nil {
 			return c.Send("❌ Ошибка генерации QR кода.")
 		}
 
-		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: fmt.Sprintf("%s — сканируйте в Hiddify", ib.DisplayName)}
+		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: qrCaption(ib)}
 		return c.Send(photo)
 	})
 
@@ -672,6 +685,23 @@ func getInboundAndUser(c tele.Context) (database.InboundConfig, database.User, e
 	}
 
 	return ib, user, nil
+}
+
+// linkServerAddr — адрес сервера для ссылки инбаунда. Mask-инбаунды живут
+// только на RuVDS (Xray-сайдкар), остальные — как раньше, через ServerIP.
+func linkServerAddr(ib database.InboundConfig) string {
+	if ib.Protocol == "mask" {
+		return service.GetRuVDSIP()
+	}
+	return ServerIP
+}
+
+// qrCaption — подпись к QR: для масок клиент другой.
+func qrCaption(ib database.InboundConfig) string {
+	if ib.Protocol == "mask" {
+		return fmt.Sprintf("%s — только v2rayNG / Happ / Streisand (Hiddify не подойдёт)", ib.DisplayName)
+	}
+	return fmt.Sprintf("%s — сканируйте в Hiddify", ib.DisplayName)
 }
 
 func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
