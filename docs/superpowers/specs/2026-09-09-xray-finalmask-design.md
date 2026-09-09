@@ -166,14 +166,16 @@ mask-инбаунда содержит порт маски и `fm`. Стенд �
 
 ### Верификация этапа 1
 
-1. `POST /api/xray/ruvds/setup` → `xray version` на RuVDS показывает пин.
-2. `POST /api/reload` → `journalctl -u xray -n 20` без ошибок,
-   `ss -ltnp | grep <ListenPort>`.
-3. Подписка `/sub-ruvds/:token` содержит ссылку с `fm`.
-4. v2rayNG импортирует ссылку и подключается; на RuVDS
-   `journalctl -u sing-box` показывает соединение с 127.0.0.1.
-5. Sing-box клиент (Hiddify) с той же ссылкой НЕ подключается — это
-   ожидаемо и должно быть задокументировано в кнопке бота.
+1. `PUT /api/inbounds/<id RU-MASK>` с `{"mask_json": "{\"tcp\":[{\"type\":\"sudoku\",\"settings\":{\"password\":\"<32 случайных символов>\",\"ascii\":\"prefer_entropy\",\"paddingMin\":2,\"paddingMax\":7}}]}", "enabled": true}` → 200.
+2. `GET /api/xray/ruvds/config` → JSON с `dokodemo-door`, портом 2071 и `"port": 2060` в settings.
+3. `POST /api/xray/ruvds/setup` → 200; `GET /api/xray/ruvds/status` → `installed_version` содержит `26.9.9`, `status: running`.
+4. На RuVDS: `ss -ltnp | grep 2071` показывает `xray`; `journalctl -u xray -n 20` без ошибок; `ufw status | grep 2071` — ALLOW.
+5. `GET /sub-ruvds/<token>` → в base64 есть строка `vless://…@<RUVDS_IP>:2071?…fm=%7B%22tcp%22…#RU-MASK`; `GET /sub/<token>` этой строки НЕ содержит.
+6. v2rayNG (тестер в РФ, инструкция по UI): импорт ссылки → подключение → открыть 2ip.ru, ожидается российский IP RuVDS. На RuVDS `journalctl -u sing-box` показывает `inbound connection from 127.0.0.1`.
+7. Hiddify с той же ссылкой НЕ подключается — ожидаемо.
+8. `PUT /api/inbounds/<id>` с `{"enabled": false}` → `GET /api/xray/ruvds/status` → `stopped` (DeployXrayConfigRuVDS(nil) остановил сервис).
+
+Статус: код этапа 1 реализован 2026-09-09 (ветка feature/xray-mask-ruvds), ручная верификация на проде не проводилась.
 
 ## Этап 2 — XDNS как бутстрап-канал на Hetzner
 

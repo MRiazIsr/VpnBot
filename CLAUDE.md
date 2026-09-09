@@ -29,7 +29,7 @@ VPN management system: Go backend + Telegram bot + Next.js admin panel.
 ### Packages
 
 - **`database/`** — GORM models (`User`, `InboundConfig`, `ConnectionLog`, `WireGuardConfig`, `TelemetConfig`, `TurnConfig`), SQLite init with auto-migration and seed data
-- **`service/`** — sing-box JSON config generation (`GenerateAndReload()` for Hetzner + `GenerateAndReloadRuVDS()` for the RuVDS mirror over SSH), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go` + `portforward_nft.go`), connectivity checks (`network.go`), VK TURN tunnel (`turnproxy.go`), WireGuard tunnel RuVDS↔Hetzner (`wireguard.go`), sing-box mirror on RuVDS via SSH (`singboxruvds.go`), telemt mirror on RuVDS via SSH (`telemtruvds.go`), health monitoring (`service/health/`)
+- **`service/`** — sing-box JSON config generation (`GenerateAndReload()` for Hetzner + `GenerateAndReloadRuVDS()` for the RuVDS mirror over SSH), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go` + `portforward_nft.go`), connectivity checks (`network.go`), VK TURN tunnel (`turnproxy.go`), WireGuard tunnel RuVDS↔Hetzner (`wireguard.go`), sing-box mirror on RuVDS via SSH (`singboxruvds.go`), telemt mirror on RuVDS via SSH (`telemtruvds.go`), Xray finalmask sidecar on RuVDS via SSH (`xray.go` — pure config builder, `xrayruvds.go` — SSH mirror), health monitoring (`service/health/`)
 - **`api/handlers/`** — REST handlers: auth, users, inbounds CRUD, stats, public subscription endpoints (`/sub/:token` for Hetzner, `/sub-ruvds/:token` for RuVDS)
 - **`api/middleware/`** — CORS and JWT Bearer auth
 - **`api/router/`** — Route registration under `/api` with auth group
@@ -47,7 +47,8 @@ VPN management system: Go backend + Telegram bot + Next.js admin panel.
 
 Drives both sing-box config generation and subscription links. Key fields:
 
-- `Protocol`: `"vless"` | `"hysteria2"` | `"shadowtls"`
+- `Protocol`: `"vless"` | `"hysteria2"` | `"shadowtls"` | `"mask"`
+- `MaskInnerTag`, `MaskJSON`: mask-only (Protocol="mask"). Xray on RuVDS listens on `ListenPort` as `dokodemo-door` with `streamSettings.finalmask = MaskJSON` and forwards raw bytes to `127.0.0.1:<inner.ListenPort>` where `inner.Tag == MaskInnerTag` (must be enabled vless over plain TCP). Mask inbounds are skipped by both sing-box generators and by `/sub/:token`; `/sub-ruvds/:token` and the bot emit the inner link with the mask port and `fm=<url-encoded MaskJSON>` — Xray-based clients only (v2rayNG, v2rayN, Happ, Streisand).
 - `Tag`, `DisplayName`: user-facing labels (visible as connection name in VPN clients)
 - `ListenPort`, `SNI`, `ServerAddress`: connection endpoint (`ServerAddress` empty = fall back to `SERVER_IP`)
 - `TLSType`: `"reality"` (uses per-inbound Reality keys) | `"certificate"` (uses cert_path/key_path) — applies to VLESS
@@ -125,6 +126,7 @@ Manual verification remains critical for changes affecting sing-box behavior —
 - WireGuard: `/api/wireguard/{config,setup,restart,stop,status}` — управление wg-quick@wg0 на Hetzner
 - Sing-box RuVDS: `/api/singbox/ruvds/{setup,reload,start,stop,status,config}` — управление зеркалом sing-box на RuVDS через SSH
 - Telemt RuVDS: `/api/telemt/ruvds/{setup,reload,start,stop,status}` — управление зеркалом MTProto на RuVDS через SSH
+- Xray RuVDS: `/api/xray/ruvds/{setup,reload,start,stop,status,config,logs}` — Xray finalmask sidecar on RuVDS (pinned `service.XrayVersion`). `reload` = the same as singbox reload (sing-box first, then Xray; Xray has no hot reload, the service is restarted).
 
 Server listens on `:8085` (proxied via Caddy on `<API_DOMAIN>:8443`).
 
