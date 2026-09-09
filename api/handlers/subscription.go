@@ -37,6 +37,10 @@ func GetSubscription() gin.HandlerFunc {
 
 		links := []string{}
 		for _, ib := range inbounds {
+			// Xray-сайдкар стоит только на RuVDS: Hetzner-ссылка на маску не сработает.
+			if ib.Protocol == "mask" {
+				continue
+			}
 			links = append(links, service.GenerateLinkForInbound(ib, user, serverIP))
 		}
 

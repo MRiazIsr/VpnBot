@@ -103,6 +103,15 @@ func SetupRouter(r *gin.Engine) {
 			auth.GET("/singbox/ruvds/logs", handlers.GetSingboxRuVDSLogs())
 			auth.POST("/singbox/ruvds/rollback", handlers.RollbackRuVDSSingbox())
 
+			// Xray finalmask-сайдкар на RuVDS
+			auth.POST("/xray/ruvds/setup", handlers.SetupXrayRuVDS())
+			auth.POST("/xray/ruvds/reload", handlers.ReloadXrayRuVDS())
+			auth.POST("/xray/ruvds/start", handlers.StartXrayRuVDS())
+			auth.POST("/xray/ruvds/stop", handlers.StopXrayRuVDS())
+			auth.GET("/xray/ruvds/status", handlers.GetXrayRuVDSStatus())
+			auth.GET("/xray/ruvds/config", handlers.PreviewXrayRuVDSConfig())
+			auth.GET("/xray/ruvds/logs", handlers.GetXrayRuVDSLogs())
+
 			// Telemt mirror on RuVDS
 			auth.POST("/telemt/ruvds/setup", handlers.SetupTelemtRuVDS())
 			auth.POST("/telemt/ruvds/reload", handlers.ReloadTelemtRuVDS())

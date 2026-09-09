@@ -66,6 +66,33 @@ func validateInboundCombination(input *database.InboundConfig) string {
 	return ""
 }
 
+// validateMaskInbound — проверки для Protocol="mask". Возвращает текст
+// ошибки или "". Сбрасывает ExitOutbound: маршрут решает внутренний инбаунд.
+func validateMaskInbound(input *database.InboundConfig) string {
+	if input.ListenPort == 0 {
+		return "listen_port is required for mask"
+	}
+	if input.MaskInnerTag == "" {
+		return "mask_inner_tag is required for mask"
+	}
+	if err := service.ValidateMaskJSON(input.MaskJSON); err != nil {
+		return "mask_json: " + err.Error()
+	}
+	var inner database.InboundConfig
+	if err := database.DB.Where("tag = ?", input.MaskInnerTag).First(&inner).Error; err != nil {
+		return "mask_inner_tag: inbound not found"
+	}
+	if inner.Protocol != "vless" || inner.Transport != "" {
+		return "mask_inner_tag must point to a vless inbound over plain TCP"
+	}
+	if !inner.Enabled {
+		return "mask_inner_tag: inner inbound is disabled"
+	}
+	// Exit решает внутренний инбаунд; у маски своего маршрута нет.
+	input.ExitOutbound = ""
+	return ""
+}
+
 func GetSNIPresets() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		type sniEntry struct {
@@ -207,12 +234,19 @@ func CreateInbound() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Tag is required"})
 			return
 		}
-		if input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', or 'shadowtls'"})
+		if input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" && input.Protocol != "mask" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', 'shadowtls', or 'mask'"})
 			return
 		}
 
-		if input.Protocol != "shadowtls" {
+		switch input.Protocol {
+		case "mask":
+			if msg := validateMaskInbound(&input); msg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+				return
+			}
+		case "shadowtls":
+		default:
 			if err := validateInboundCombination(&input); err != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err})
 				return
@@ -303,12 +337,35 @@ func UpdateInbound() gin.HandlerFunc {
 
 		trimInboundStrings(&input)
 
-		if input.Protocol != "" && input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', or 'shadowtls'"})
+		if input.Protocol != "" && input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" && input.Protocol != "mask" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', 'shadowtls', or 'mask'"})
 			return
 		}
 
-		if input.Protocol != "shadowtls" && existing.Protocol != "shadowtls" {
+		effectiveProtocol := input.Protocol
+		if effectiveProtocol == "" {
+			effectiveProtocol = existing.Protocol
+		}
+		switch effectiveProtocol {
+		case "mask":
+			// Для частичного апдейта берём недостающие поля из existing.
+			merged := existing
+			if input.ListenPort != 0 {
+				merged.ListenPort = input.ListenPort
+			}
+			if input.MaskInnerTag != "" {
+				merged.MaskInnerTag = input.MaskInnerTag
+			}
+			if input.MaskJSON != "" {
+				merged.MaskJSON = input.MaskJSON
+			}
+			if msg := validateMaskInbound(&merged); msg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+				return
+			}
+			input.ExitOutbound = ""
+		case "shadowtls":
+		default:
 			if err := validateInboundCombination(&input); err != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err})
 				return
