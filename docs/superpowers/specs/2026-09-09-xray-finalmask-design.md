@@ -1,0 +1,242 @@
+# Xray Finalmask как сайдкар к sing-box — Design
+
+Статус: спека утверждена в чате 2026-09-09. MTProto-часть сознательно вне
+скоупа.
+
+## Context
+
+Finalmask — слой Xray-core поверх готового потока: ядро отработало VLESS,
+Reality и транспорт, а finalmask «переодевает» байты. Задаётся в
+`streamSettings.finalmask` на инбаунде и аутбаунде. Три части: `tcp[]`,
+`udp[]`, `quicParams`. Маски для TCP: `header-custom`, `fragment`, `sudoku`.
+Для UDP: `header-custom`, `mkcp-legacy`, `noise`, `salamander`, `sudoku`,
+`xdns`, `xicmp`, `realm`. В ссылке-подписке передаётся параметром `fm` как
+JSON всего блока finalmask.
+
+Три факта, которые задают рамки:
+
+1. **Finalmask есть только в Xray-core.** Проект генерирует конфиг sing-box.
+   В sing-box, mihomo и клиентах на их базе (Hiddify, Shadowrocket) finalmask
+   нет. Применить его можно только добавив Xray рядом с sing-box.
+2. **Клиенты.** `fm` понимают только Xray-клиенты: v2rayNG, v2rayN, Happ,
+   Streisand. Sing-box-клиент ссылку с `fm` либо не импортирует, либо
+   проигнорирует параметр и не подключится к замаскированному порту.
+3. **Версия.** `header-custom` и `sudoku` появились в Xray-core v26.3.27.
+   В v26.5.9 открыт баг #6184: UDP-листенер с finalmask умирает от первого
+   невалидного пакета. Для публичного порта 53 это смертельно. Версия
+   пинится только после проверки, что баг закрыт в выбранном релизе.
+
+Что уже есть в репозитории и переиспользуется:
+
+- `service/singboxruvds.go` — паттерн зеркала на RuVDS по SSH: install,
+  ensure service, deploy config, start/stop/status/logs.
+- `Protocol="shadowtls"` — образец «инбаунд-обёртка, заворачивающая другой
+  инбаунд» и в генераторе (`buildInboundGroup`), и в ссылке
+  (`generateShadowTLSLink`).
+- dnstt/slipstream PoC на Hetzner с делегированной DNS-зоной
+  (`docs/slipstream-poc.md`) — образец инфраструктуры для XDNS.
+
+## Решение: Xray как сайдкар, sing-box не трогаем
+
+Рассмотрены три варианта.
+
+1. **Заменить sing-box на Xray целиком.** Отклонён: теряются ShadowTLS,
+   anytls-плечо, генератор, тесты и все sing-box-клиенты.
+2. **Xray как второй полноценный движок** со своими VLESS-Reality инбаундами
+   и синхронизацией пользователей. Рабочий, но дублирует auth, ключи Reality
+   и exit-роутинг в двух генераторах. Оставлен как запасной для этапа 1.
+3. **Xray как «раздевалка» перед sing-box.** Принят. На RuVDS Xray слушает
+   новый порт инбаундом `dokodemo-door` с finalmask, снимает маску и отдаёт
+   голые байты в существующий VLESS-Reality инбаунд sing-box на loopback.
+   Пользователи, ключи Reality, `ExitOutbound`, zapret остаются в sing-box.
+   Xray не знает о пользователях.
+
+Исключение — XDNS. Он работает только поверх mKCP, а mKCP терминируется в
+Xray. Поэтому XDNS-инбаунд единственный, где Xray видит список UUID.
+
+### Что сознательно не делаем
+
+- **fragment.** Режет ClientHello клиента. У Reality SNI и так белый,
+  резать нечего. Zapret работает на другом плече (egress с RuVDS) и не
+  пересекается.
+- **XICMP.** Нет IPv6, на Android без root не работает (raw-сокет), ТСПУ
+  режет ICMP по частоте.
+- **Realm.** Нужен домашний IP в РФ внутри белого списка. Его нет.
+- **XDRIVE.** Только анонс.
+
+## Этап 0 — спайк (вне кода проекта)
+
+Цель: ответить на четыре вопроса, а не построить что-то.
+
+1. Работает ли finalmask (`sudoku`, `header-custom`) на инбаунде
+   `dokodemo-door`, который форвардит на VLESS-Reality инбаунд sing-box на
+   loopback. Клиент — Xray на рабочей машине с `finalmask` на аутбаунде.
+2. Каков реальный формат `fm` в ссылке: снять через импорт-экспорт в
+   v2rayNG (или из исходников `2dust/AndroidLibXrayLite` / v2rayN).
+3. Какая версия Xray-core пинится: минимум v26.3.27, с проверкой статуса
+   бага #6184.
+4. Матрица клиентов, которым можно выдавать `fm`-ссылки.
+
+Стенд: RuVDS (доступен по SSH), Xray на неиспользуемом порту, целевой
+инбаунд — `vless-direct-tcp` :2060 (direct exit, без зависимости от
+WireGuard). Hetzner с рабочей машины недоступен, XDNS-часть спайка
+переносится на этап 2.
+
+Результат: записка `docs/xray-finalmask-spike.md`. Конфиги стенда
+выбрасываются, Xray на RuVDS останавливается.
+
+Если dokodemo-door не принимает finalmask — этап 1 переходит на вариант 2
+(Xray VLESS-Reality с копией ключей и пользователей). Спека обновляется.
+
+## Этап 1 — TCP-маска на RuVDS
+
+### Модель
+
+Новый `Protocol="mask"` в `InboundConfig`, по образцу shadowtls:
+
+| Поле | Назначение |
+|---|---|
+| `ListenPort` | публичный порт Xray на RuVDS |
+| `MaskInnerTag` | `Tag` внутреннего VLESS-инбаунда sing-box, куда форвардить |
+| `MaskJSON` | JSON блока `finalmask` (текст, хранится как есть) |
+| `Tag`, `DisplayName`, `Enabled` | как у остальных |
+
+Валидация в handler: `MaskInnerTag` должен указывать на существующий
+enabled инбаунд с `Protocol="vless"` и `Transport=""` (TCP). `MaskJSON`
+должен парситься как объект с ключом `tcp`. На первом этапе только TCP.
+
+Seed: один disabled инбаунд `RU-MASK` с `sudoku` перед `vless-direct-tcp`,
+`MaskJSON` заполняется через API.
+
+### Генерация конфига
+
+`buildXrayConfig(inbounds []InboundConfig) ([]byte, error)` — чистая
+функция в `service/xray.go`. Берёт только `Protocol="mask"`, для каждого:
+
+```json
+{
+  "tag": "<Tag>",
+  "listen": "0.0.0.0",
+  "port": <ListenPort>,
+  "protocol": "dokodemo-door",
+  "settings": { "address": "127.0.0.1", "port": <inner.ListenPort>, "network": "tcp" },
+  "streamSettings": { "network": "tcp", "finalmask": <MaskJSON> }
+}
+```
+
+Один аутбаунд `freedom`. Логи в journal. Если mask-инбаундов нет —
+возвращает пустой конфиг, и сервис на RuVDS останавливается, а не
+перезапускается с пустым набором листенеров.
+
+`GenerateAndReloadRuVDS()` дополняется: после sing-box вызывает
+`buildXrayConfig` и `DeployXrayConfigRuVDS`. Ошибка Xray не откатывает
+sing-box, а возвращается наверх отдельным сообщением.
+
+### Зеркало на RuVDS
+
+`service/xrayruvds.go` копирует `singboxruvds.go`: `InstallXrayRuVDS`
+(скачивание релиза запиненной версии, проверка sha256), `EnsureXrayRuVDSService`
+(unit-файл), `DeployXrayConfigRuVDS`, `Start/Stop/IsRunning/Logs`. Версия
+— константа `xrayVersion` в этом файле, с комментарием почему именно она.
+
+Роуты: `/api/xray/ruvds/{setup,reload,start,stop,status}` по образцу
+singbox-роутов.
+
+### Ссылки
+
+`GenerateLinkForInbound` для `Protocol="mask"`: берёт ссылку внутреннего
+инбаунда, подменяет порт на `ListenPort` маски и добавляет `fm=<MaskJSON>`
+(URL-encoded). `serverAddr` — RuVDS.
+
+Через `/sub/:token` (Hetzner-направленный) mask-инбаунды не отдаются: Xray
+на Hetzner не стоит.
+
+### Бот
+
+Кнопка для mask-инбаунда с пометкой «только v2rayNG / Happ / Streisand».
+Текст — в bot-пакете, на русском.
+
+### Тесты
+
+В `service/vpn_test.go` стиле: `buildXrayConfig` с одним и двумя
+mask-инбаундами, с пустым набором, с неверным `MaskInnerTag`; ссылка для
+mask-инбаунда содержит порт маски и `fm`. Стенд с реальным клиентом —
+ручная верификация, как для всех sing-box-изменений.
+
+### Верификация этапа 1
+
+1. `POST /api/xray/ruvds/setup` → `xray version` на RuVDS показывает пин.
+2. `POST /api/reload` → `journalctl -u xray -n 20` без ошибок,
+   `ss -ltnp | grep <ListenPort>`.
+3. Подписка `/sub-ruvds/:token` содержит ссылку с `fm`.
+4. v2rayNG импортирует ссылку и подключается; на RuVDS
+   `journalctl -u sing-box` показывает соединение с 127.0.0.1.
+5. Sing-box клиент (Hiddify) с той же ссылкой НЕ подключается — это
+   ожидаемо и должно быть задокументировано в кнопке бота.
+
+## Этап 2 — XDNS как бутстрап-канал на Hetzner
+
+Цель: замена dnstt/slipstream в роли канала «достучаться», не основной
+транспорт. Сравнение с dnstt по пропускной способности, времени
+подключения и деградации после ~10 МБ (эффект, снятый на slipstream).
+
+### Инфраструктура
+
+Отдельная зона по образцу dnstt: `t.<домен>` NS → `a.<домен>`, у которой
+A-запись на Hetzner; `a.` вне NS-зоны. Порт 53 на Hetzner на время
+этапа отдаётся XDNS вместо dnstt-PoC (решение принято 2026-09-09).
+
+### Конфиг
+
+Xray на Hetzner локально (без SSH), unit `xray.service`. Инбаунд:
+
+```json
+{
+  "protocol": "vless",
+  "settings": { "clients": [ { "id": "<UUID>" } ], "decryption": "none" },
+  "streamSettings": {
+    "network": "kcp",
+    "kcpSettings": { "mtu": 900 },
+    "finalmask": { "udp": [ { "type": "xdns", "settings": { "domains": ["t.<домен>:txt"] } } ] }
+  }
+}
+```
+
+Список `clients` — из активных `User` в БД. Аутбаунд `freedom`, egress
+direct с Hetzner.
+
+### Модель и код
+
+`Protocol="xdns"` в `InboundConfig`: `ListenPort` (53), `SNI`
+переиспользуется как домен зоны, `MaskJSON` — блок finalmask с
+`resolvers` для клиентской стороны. Генератор: `buildXrayConfig` получает
+`[]User` и добавляет xdns-инбаунды. Деплой: `service/xrayhetzner.go` —
+локальная запись `/etc/xray/config.json` и `systemctl reload`.
+
+Ссылка: `vless://<uuid>@<резолвер>:53?type=kcp&...&fm=<JSON>`, где адрес
+назначения — резолвер, а не Hetzner. Два резолвера в `fm`: `8.8.8.8` и
+DNS оператора (адрес оператора подставляет тестер).
+
+### Верификация
+
+Тестер в РФ, v2rayNG, инструкция только через UI (без adb). Метрики
+снимаются с трёх резолверов: 8.8.8.8, оператор, наш authoritative
+напрямую (как контроль). Сравнение с замерами dnstt из
+`docs/slipstream-poc.md`.
+
+## Этап 3 — бэклог
+
+- UDP-маски и port hopping через `quicParams`, если у Xray подтверждается
+  Hysteria2-инбаунд.
+- Маска для Hetzner-направленных ссылок, если появится необходимость.
+
+## Риски
+
+- **Баг #6184** (UDP-листенер умирает от мусора). Для этапа 1 не
+  актуален (TCP). Для этапа 2 — блокер до закрытия.
+- **Dokodemo-door + finalmask** не проверен. Закрывается спайком.
+- **Раздвоение клиентской базы.** Часть ссылок только для Xray-клиентов.
+  Решается пометкой в боте, а не автодетектом.
+- **Второй бинарь на RuVDS.** Пин версии, sha256, unit с `Restart=always`.
+  При cold reboot RuVDS (см. память о rollback-схеме) Xray поднимается
+  systemd, конфиг лежит на диске.
