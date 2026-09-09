@@ -159,3 +159,20 @@ func TestGenerateLinkForInbound_MaskWithoutDB(t *testing.T) {
 		t.Fatalf("expected empty link without DB, got %q", got)
 	}
 }
+
+func TestGenerateMaskLink_RejectsNonVlessInner(t *testing.T) {
+	_, mask := maskFixture()
+	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
+
+	// Тест 1: Inner с Protocol "mask" (циклический путь)
+	innerMask := database.InboundConfig{Tag: "cyclic-mask", Protocol: "mask", ListenPort: 2060}
+	if got := GenerateMaskLink(mask, innerMask, user, "198.51.100.7"); got != "" {
+		t.Errorf("should reject mask inner, got %q", got)
+	}
+
+	// Тест 2: Inner с Protocol "hysteria2"
+	innerHy2 := database.InboundConfig{Tag: "hy2-inner", Protocol: "hysteria2", ListenPort: 2060}
+	if got := GenerateMaskLink(mask, innerHy2, user, "198.51.100.7"); got != "" {
+		t.Errorf("should reject non-vless inner, got %q", got)
+	}
+}

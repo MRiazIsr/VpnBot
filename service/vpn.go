@@ -672,6 +672,11 @@ func lookupInboundByTag(tag string) (database.InboundConfig, bool) {
 // компактный JSON блока finalmask, URL-encoded. Понимают только
 // Xray-клиенты: v2rayNG, v2rayN, Happ, Streisand.
 func GenerateMaskLink(mask, inner database.InboundConfig, user database.User, serverAddr string) string {
+	// Внутренний инбаунд должен быть VLESS, иначе mask→mask рекурсия
+	// (циклический путь = stack overflow). Совпадает с findMaskInner.
+	if inner.Protocol != "vless" {
+		return ""
+	}
 	inner.ServerAddress = "" // адрес маски — тот, что передан (RuVDS), не override внутреннего
 	innerLink := GenerateLinkForInbound(inner, user, serverAddr)
 	u, err := url.Parse(innerLink)
