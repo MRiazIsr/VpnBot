@@ -398,6 +398,12 @@ func UpdateInbound() gin.HandlerFunc {
 
 		database.DB.Model(&existing).Updates(input)
 
+		// Updates(struct) пропускает нулевые значения, поэтому exit_outbound
+		// для маски обнуляем явно: маршрут решает внутренний инбаунд.
+		if effectiveProtocol == "mask" {
+			database.DB.Model(&existing).Update("exit_outbound", "")
+		}
+
 		// Reload updated record
 		database.DB.First(&existing, id)
 
