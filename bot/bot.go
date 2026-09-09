@@ -27,7 +27,7 @@ func Start(token string, adminID int64) {
 
 	ServerIP = os.Getenv("SERVER_IP")
 	if ServerIP == "" {
-		ServerIP = "49.13.201.110"
+		log.Println("WARNING: SERVER_IP is not set, connection links will be broken")
 	}
 
 	pref := tele.Settings{
@@ -112,9 +112,6 @@ func Start(token string, adminID int64) {
 		approveBtn.Inline(approveBtn.Row(btnApprove))
 
 		targetAdmin := AdminID
-		if targetAdmin == 0 {
-			targetAdmin = 124343839
-		}
 
 		_, err := b.Send(&tele.User{ID: targetAdmin}, msg, approveBtn, tele.ModeMarkdown)
 		if err != nil {

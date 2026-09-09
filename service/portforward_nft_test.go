@@ -13,12 +13,12 @@ table ip relay {
 	chain prerouting {
 		type nat hook prerouting priority dstnat; policy accept;
 		tcp dport 9443 redirect to :29443
-		tcp dport 443 dnat to 49.13.201.110:443
-		tcp dport 2056 dnat to 49.13.201.110:2056
+		tcp dport 443 dnat to 203.0.113.10:443
+		tcp dport 2056 dnat to 203.0.113.10:2056
 	}
 	chain postrouting {
 		type nat hook postrouting priority srcnat; policy accept;
-		ip daddr 49.13.201.110 tcp dport { 443, 2056 } masquerade
+		ip daddr 203.0.113.10 tcp dport { 443, 2056 } masquerade
 	}
 }
 `
@@ -33,30 +33,30 @@ func TestRelayTableExists(t *testing.T) {
 }
 
 func TestBuildForwardLines(t *testing.T) {
-	pre, post := buildForwardLines(2057, "tcp", "49.13.201.110")
-	if pre != "\t\ttcp dport 2057 dnat to 49.13.201.110:2057" {
+	pre, post := buildForwardLines(2057, "tcp", "203.0.113.10")
+	if pre != "\t\ttcp dport 2057 dnat to 203.0.113.10:2057" {
 		t.Fatalf("pre=%q", pre)
 	}
-	if post != "\t\tip daddr 49.13.201.110 tcp dport 2057 masquerade" {
+	if post != "\t\tip daddr 203.0.113.10 tcp dport 2057 masquerade" {
 		t.Fatalf("post=%q", post)
 	}
 }
 
 func TestInsertForward_AddsBothLinesPreservingRest(t *testing.T) {
-	out, err := insertForward(sampleConf, 2057, "tcp", "49.13.201.110")
+	out, err := insertForward(sampleConf, 2057, "tcp", "203.0.113.10")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "tcp dport 2057 dnat to 49.13.201.110:2057") {
+	if !strings.Contains(out, "tcp dport 2057 dnat to 203.0.113.10:2057") {
 		t.Fatal("missing prerouting dnat for 2057")
 	}
-	if !strings.Contains(out, "ip daddr 49.13.201.110 tcp dport 2057 masquerade") {
+	if !strings.Contains(out, "ip daddr 203.0.113.10 tcp dport 2057 masquerade") {
 		t.Fatal("missing postrouting masquerade for 2057")
 	}
 	if !strings.Contains(out, "tcp dport 9443 redirect to :29443") {
 		t.Fatal("tunnel redirect line was lost")
 	}
-	if !strings.Contains(out, "tcp dport 443 dnat to 49.13.201.110:443") {
+	if !strings.Contains(out, "tcp dport 443 dnat to 203.0.113.10:443") {
 		t.Fatal("existing 443 dnat lost")
 	}
 	if !strings.Contains(out, "#!/usr/sbin/nft -f") {
@@ -68,8 +68,8 @@ func TestInsertForward_AddsBothLinesPreservingRest(t *testing.T) {
 }
 
 func TestInsertForward_Idempotent(t *testing.T) {
-	once, _ := insertForward(sampleConf, 2057, "tcp", "49.13.201.110")
-	twice, err := insertForward(once, 2057, "tcp", "49.13.201.110")
+	once, _ := insertForward(sampleConf, 2057, "tcp", "203.0.113.10")
+	twice, err := insertForward(once, 2057, "tcp", "203.0.113.10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestInsertForward_Idempotent(t *testing.T) {
 }
 
 func TestInsertForward_Refuses9443(t *testing.T) {
-	if _, err := insertForward(sampleConf, 9443, "tcp", "49.13.201.110"); err == nil {
+	if _, err := insertForward(sampleConf, 9443, "tcp", "203.0.113.10"); err == nil {
 		t.Fatal("must refuse port 9443 (reserved MTProto tunnel)")
 	}
 }
@@ -98,7 +98,7 @@ func TestRemoveForward_RemovesOnlyTargetLines(t *testing.T) {
 	if strings.Contains(out, "dport 2056 dnat") {
 		t.Fatal("2056 dnat not removed")
 	}
-	if !strings.Contains(out, "tcp dport 443 dnat to 49.13.201.110:443") {
+	if !strings.Contains(out, "tcp dport 443 dnat to 203.0.113.10:443") {
 		t.Fatal("must not remove unrelated 443")
 	}
 	if !strings.Contains(out, "tcp dport 9443 redirect to :29443") {
@@ -116,11 +116,11 @@ func TestParseNftForwards(t *testing.T) {
 	nftOut := `table ip relay {
 	chain prerouting {
 		tcp dport 9443 redirect to :29443
-		tcp dport 443 dnat to 49.13.201.110:443
-		tcp dport 2056 dnat to 49.13.201.110:2056
+		tcp dport 443 dnat to 203.0.113.10:443
+		tcp dport 2056 dnat to 203.0.113.10:2056
 	}
 }`
-	rules := parseNftForwards(nftOut, "49.13.201.110")
+	rules := parseNftForwards(nftOut, "203.0.113.10")
 	if len(rules) != 2 {
 		t.Fatalf("want 2 dnat rules (9443 redirect excluded), got %d: %+v", len(rules), rules)
 	}
@@ -128,7 +128,7 @@ func TestParseNftForwards(t *testing.T) {
 		if r.Port == 9443 {
 			t.Fatal("redirect 9443 must not be reported as a forward")
 		}
-		if r.Destination != "49.13.201.110:"+strconv.Itoa(r.Port) {
+		if r.Destination != "203.0.113.10:"+strconv.Itoa(r.Port) {
 			t.Fatalf("bad dest %q", r.Destination)
 		}
 	}

@@ -38,7 +38,7 @@ journalctl -u nfqws -n 100 --no-pager
 nft list ruleset | grep -B 1 'queue num 100'
 ```
 
-Проверка wg-туннеля к Hetzner: с любого существующего inbound (не direct-exit) сделать `curl ipinfo.io/json` — должен показывать Hetzner IP (49.13.201.110). Правила фильтруют только `oifname "eth0"`, wg-трафик идёт через wg0 и не трогается.
+Проверка wg-туннеля к Hetzner: с любого существующего inbound (не direct-exit) сделать `curl ipinfo.io/json` — должен показывать Hetzner IP (<HETZNER_IP>). Правила фильтруют только `oifname "eth0"`, wg-трафик идёт через wg0 и не трогается.
 
 ## Откат
 

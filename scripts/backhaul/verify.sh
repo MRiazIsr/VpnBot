@@ -84,7 +84,7 @@ fi
 # ─────────────────── 1b. прямые профили не задеты ───────────────────
 if [[ "$ONLY" == "all" || "$ONLY" == "direct" ]]; then
 head_ "1b. Прямые профили клиент→Hetzner живы и не заведены на relay"
-HETZ="${HETZNER_IP:-49.13.201.110}"
+HETZ="${HETZNER_IP:?HETZNER_IP is required}"
 for p in ${PROTECTED_DIRECT_PORTS:-4443 8444 8447}; do
   # а) порт по-прежнему принимает соединения напрямую на Hetzner
   if timeout 6 bash -c "exec 3<>/dev/tcp/${HETZ}/${p}" 2>/dev/null; then

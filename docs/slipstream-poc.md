@@ -56,21 +56,21 @@ authoritative NS снаружи — декодирует и форвардит �
 
 | Type | Host | Value | TTL |
 |------|------|-------|-----|
-| A Record | `ns` | `49.13.201.110` | Automatic (~30 мин) |
+| A Record | `ns` | `<HETZNER_IP>` | Automatic (~30 мин) |
 | NS Record | `e` | `ns.moskva.live.` | Automatic |
 
 Проверка (правильный результат — authoritative отдаёт делегацию; публичный
 резолвер на `NS e.moskva.live` вернёт ПУСТО, т.к. наш сервер не отвечает на
 обычные DNS-запросы — это норма):
 ```
-dig +short ns.moskva.live                                 # → 49.13.201.110
+dig +short ns.moskva.live                                 # → <HETZNER_IP>
 dig e.moskva.live NS @dns1.registrar-servers.com +noall +authority
                                                           # → e.moskva.live. NS ns.moskva.live.
 ```
 
 ## Hetzner (основной сервер) — что развёрнуто
 
-- Доступ: `ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110` (Ubuntu, x86_64, eth0 = публичный IP).
+- Доступ: `ssh -i ~/.ssh/cloud-hetzner-v2 root@<HETZNER_IP>` (Ubuntu, x86_64, eth0 = публичный IP).
 - Цель туннеля: builtin inbound `vless-in` (VLESS Reality поверх TCP), `127.0.0.1:8444`
   (`database/database.go:215`).
 - systemd-resolved НЕ тронут (держит только `127.0.0.53/54:53`, loopback).
@@ -101,7 +101,7 @@ dig e.moskva.live NS @dns1.registrar-servers.com +noall +authority
 
 ## RuVDS — тестовый плацдарм (российский сетевой путь)
 
-- Доступ: `ssh -i ~/.ssh/russian-vps root@194.87.80.237` (Ubuntu 20.04, x86_64).
+- Доступ: `ssh -i ~/.ssh/russian-vps root@<RUVDS_IP>` (Ubuntu 20.04, x86_64).
 - Хостнейм `ruvds-m96mr`. `/etc/resolv.conf` → `8.8.8.8`, `9.9.9.9`.
 - **glibc-несовместимость:** официальный бинарь slipstream v0.1.1 требует
   glibc ≥ 2.34 (символы до 2.38) и OpenSSL 3; RuVDS = glibc 2.31 / OpenSSL 1.1.
@@ -124,7 +124,7 @@ dig e.moskva.live NS @dns1.registrar-servers.com +noall +authority
 | Делегирование `e.moskva.live` → `ns.moskva.live` → Hetzner | ✅ подтверждено |
 | `slipstream-server` на Hetzner (v0.1.1, systemd, DNAT, ufw, Cloud FW) | ✅ задеплоен, active |
 | Phase 1 плумбинг (slipstream ↔ sing-box, loopback на Hetzner) | ✅ **PASS** — HTTP 400 за 0.4с |
-| Phase 1 по сети (RuVDS → `49.13.201.110:53` direct) | ✅ **PASS** — HTTP 400 за **78мс** |
+| Phase 1 по сети (RuVDS → `<HETZNER_IP>:53` direct) | ✅ **PASS** — HTTP 400 за **78мс** |
 | Phase 2a recursive через Google `8.8.8.8` | ✅ **PASS** — HTTP 400 за **101мс** |
 | Phase 2b recursive через Yandex `77.88.8.8` (РФ-резолвер) | ✅ **PASS** — HTTP 400 за **99мс** |
 
@@ -187,10 +187,10 @@ slipstream-server перенацелен `-a 127.0.0.1:8444 → 127.0.0.1:2054`
 (`vless-in-tlc-ya`: plain TCP + Reality + xtls-rprx-vision, SNI `ya.ru` —
 проще xhttp). Связка в Docker на Mac (сеть `slipnet`):
 `slip` (slipstream-client, `-r 77.88.8.8` Yandex) ← `sb` (sing-box mixed:1080,
-VLESS→slip:7000, reality pubkey `BgLsjp3u...`, sid `207fc82a9f9e741f`,
+VLESS→slip:7000, reality pubkey `<REALITY_PUBKEY>`, sid `<SHORT_ID>`,
 flow vision, uTLS random).
 
-- Egress через прокси = **49.13.201.110 (Hetzner)**, напрямую — реальный IP.
+- Egress через прокси = **<HETZNER_IP> (Hetzner)**, напрямую — реальный IP.
 - Стабильность **8/8**, реальные сайты грузятся (Wikipedia 348КБ OK).
 - Throughput ~128 кбит/с, латентность 3–5с. ⚠ **НЕ потолок**: образ slipstream
   только amd64 → qemu-эмуляция на Apple Silicon (бинарь тяжёлый по QUIC-крипто) +
@@ -198,8 +198,8 @@ flow vision, uTLS random).
   даст только Meson-сборка из исходников или нативный x86_64-Linux клиент.
 
 Прод-параметры VLESS-клиента (для GUI-теста): server=наш slipstream-локалпорт,
-uuid юзера из `/opt/VpnBot/vpn.db`, reality pub `BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo`,
-sid `207fc82a9f9e741f`, sni `ya.ru`, flow `xtls-rprx-vision`, fp random,
+uuid юзера из `/opt/VpnBot/vpn.db`, reality pub `<REALITY_PUBKEY>`,
+sid `<SHORT_ID>`, sni `ya.ru`, flow `xtls-rprx-vision`, fp random,
 резолвер — только РФ (Yandex 77.88.8.8).
 
 Замечание про сборку из исходников: slipstream — **C/Meson** проект (не Rust/Go),
@@ -220,7 +220,7 @@ egress), slipstream-server перенацелен `-a 127.0.0.1:2054 → 127.0.0
 Результат GUI: приложение слушает локально **`127.0.0.1:1080`** (НЕ 7000 как в их
 README; 7000 на macOS занят AirPlay/ControlCenter — частая ловушка). Конфиг
 `--domain e.moskva.live --resolver 77.88.8.8` применился. Egress через прокси =
-**49.13.201.110 (Hetzner)**, HTTP 200, ~1.6–2с.
+**<HETZNER_IP> (Hetzner)**, HTTP 200, ~1.6–2с.
 
 **Вывод: `slipstream-rust` (DNSTT.XYZ) wire-совместим с нашим официальным
 EndPositive slipstream-server v0.1.1.** Готовый GUI-клиент (Android + desktop)

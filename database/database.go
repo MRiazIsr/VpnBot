@@ -1,7 +1,11 @@
 package database
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
 	"database/sql/driver"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -277,7 +281,7 @@ func Init(path string) {
 	if result := DB.Where("username = ?", "MRiaz").First(&oldUser); result.Error != nil {
 		log.Println("Restoring user MRiaz...")
 		DB.Create(&User{
-			UUID:              "15986646-9dd8-45b8-b6d4-5c0cf9c8b784",
+			UUID:              uuid.New().String(),
 			Username:          "MRiaz",
 			TelegramUsername:  "MRiaz",
 			Status:            "active",
@@ -291,6 +295,12 @@ func Init(path string) {
 	DB.Model(&InboundConfig{}).Count(&inboundCount)
 	if inboundCount == 0 {
 		log.Println("Seeding builtin inbound configs...")
+		// Ключи Reality генерируются при первом запуске — в коде их быть не должно.
+		realityPriv, realityPub, err := GenerateRealityKeypair()
+		if err != nil {
+			log.Fatal("Failed to generate Reality keypair:", err)
+		}
+		realityShortIDs := JSONStringArray{GenerateRealityShortID()}
 		builtins := []InboundConfig{
 			{
 				Tag:               "vless-in",
@@ -306,9 +316,9 @@ func Init(path string) {
 				Enabled:           true,
 				IsBuiltin:         true,
 				SortOrder:         0,
-				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
-				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
-				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
+				RealityPrivateKey: realityPriv,
+				RealityPublicKey:  realityPub,
+				RealityShortIDs:   realityShortIDs,
 				Fingerprint:       "chrome",
 			},
 			{
@@ -325,9 +335,9 @@ func Init(path string) {
 				Enabled:           true,
 				IsBuiltin:         true,
 				SortOrder:         1,
-				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
-				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
-				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
+				RealityPrivateKey: realityPriv,
+				RealityPublicKey:  realityPub,
+				RealityShortIDs:   realityShortIDs,
 				Fingerprint:       "chrome",
 			},
 			{
@@ -361,9 +371,9 @@ func Init(path string) {
 				Enabled:           true,
 				IsBuiltin:         true,
 				SortOrder:         3,
-				RealityPrivateKey: "ONHN91OWFGFycHogYJY4X5i-Xn1qUs917dWIqnx4K04",
-				RealityPublicKey:  "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
-				RealityShortIDs:   JSONStringArray{"207fc82a9f9e741f"},
+				RealityPrivateKey: realityPriv,
+				RealityPublicKey:  realityPub,
+				RealityShortIDs:   realityShortIDs,
 				Fingerprint:       "chrome",
 			},
 		}
@@ -476,7 +486,7 @@ func migrateRealityKeysFromSettings() {
 	// Парсим short IDs
 	var shortIDs JSONStringArray
 	if err := json.Unmarshal([]byte(result.RealityShortIDs), &shortIDs); err != nil {
-		shortIDs = JSONStringArray{"207fc82a9f9e741f"}
+		shortIDs = JSONStringArray{GenerateRealityShortID()}
 	}
 
 	fingerprint := result.Fingerprint
@@ -520,4 +530,33 @@ func migrateFingerprintToChrome() {
 // Helper: Создать токен
 func GenerateToken() string {
 	return uuid.New().String()
+}
+
+// GenerateRealityKeypair возвращает пару X25519-ключей в формате sing-box/xray
+// (base64 URL-safe без набивки) — эквивалент `sing-box generate reality-keypair`.
+func GenerateRealityKeypair() (privateKey, publicKey string, err error) {
+	raw := make([]byte, 32)
+	if _, err = rand.Read(raw); err != nil {
+		return "", "", err
+	}
+	// Clamping по RFC 7748, как это делает xray x25519.
+	raw[0] &= 248
+	raw[31] &= 127
+	raw[31] |= 64
+
+	priv, err := ecdh.X25519().NewPrivateKey(raw)
+	if err != nil {
+		return "", "", err
+	}
+	enc := base64.RawURLEncoding
+	return enc.EncodeToString(priv.Bytes()), enc.EncodeToString(priv.PublicKey().Bytes()), nil
+}
+
+// GenerateRealityShortID возвращает случайный short_id для Reality (8 байт в hex).
+func GenerateRealityShortID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatal("crypto/rand failed:", err)
+	}
+	return hex.EncodeToString(b)
 }

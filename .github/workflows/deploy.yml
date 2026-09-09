@@ -40,9 +40,9 @@ jobs:
           ADMIN_ID=${{ secrets.ADMIN_ID }}
           ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }}
           SERVER_DOMAIN=${{ secrets.SERVER_DOMAIN }}
-          SERVER_IP=49.13.201.110
+          SERVER_IP=${{ secrets.HETZNER_HOST }}
           HETZNER_API_TOKEN=${{ secrets.HETZNER_API_TOKEN }}
-          HETZNER_SERVER_IP=49.13.201.110
+          HETZNER_SERVER_IP=${{ secrets.HETZNER_HOST }}
           RUVDS_IP=${{ secrets.RUVDS_IP }}
           RUVDS_SSH_USER=root
           RUVDS_SSH_KEY_PATH=/root/.ssh/ruvds_key

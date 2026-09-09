@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deploy an isolated MTProxy endpoint for `user_388535440` at `87.247.157.120:443` with FakeTLS SNI `vk.ru` without changing the existing MTProxy path.
+**Goal:** Deploy an isolated MTProxy endpoint for `user_<TELEGRAM_ID>` at `<RUVDS2_IP>:443` with FakeTLS SNI `vk.ru` without changing the existing MTProxy path.
 
-**Architecture:** A destination-specific nftables rule on RuVDS redirects only `87.247.157.120:443` to a new sing-box process on port `29444`. That process reuses the existing Reality/VLESS transport to Hetzner and targets a new loopback-only telemt instance on `127.0.0.1:19444`.
+**Architecture:** A destination-specific nftables rule on RuVDS redirects only `<RUVDS2_IP>:443` to a new sing-box process on port `29444`. That process reuses the existing Reality/VLESS transport to Hetzner and targets a new loopback-only telemt instance on `127.0.0.1:19444`.
 
 **Tech Stack:** telemt 3.4.11, sing-box, systemd, nftables, UFW, SSH.
 
@@ -12,8 +12,8 @@
 
 - Do not restart or modify the existing `telemt`, `sing-box-tunnel9443`, nginx, or VPN services.
 - Do not print or store the raw user secret in local files, repository files, or command output.
-- Use SNI `vk.ru`, public host `87.247.157.120`, and public port `443`.
-- Keep the experimental endpoint limited to `user_388535440`.
+- Use SNI `vk.ru`, public host `<RUVDS2_IP>`, and public port `443`.
+- Keep the experimental endpoint limited to `user_<TELEGRAM_ID>`.
 - Back up every modified remote file before replacement.
 
 ---
@@ -26,12 +26,12 @@
 - Create: Hetzner `/opt/telemt-sch42/tlsfront/`
 
 **Interfaces:**
-- Consumes: the existing `user_388535440` secret from `/etc/telemt/telemt.toml`.
+- Consumes: the existing `user_<TELEGRAM_ID>` secret from `/etc/telemt/telemt.toml`.
 - Produces: MTProxy listener `127.0.0.1:19444` and local API `127.0.0.1:9092`.
 
 - [ ] **Step 1: Create the alternate config without exposing the secret**
 
-Create a config template containing TLS mode, `vk.ru`, loopback listeners, API port `9092`, masking, and TLS emulation. Copy it to Hetzner, append only the existing `user_388535440` line from the production config, set ownership `root:telemt`, and mode `0640`.
+Create a config template containing TLS mode, `vk.ru`, loopback listeners, API port `9092`, masking, and TLS emulation. Copy it to Hetzner, append only the existing `user_<TELEGRAM_ID>` line from the production config, set ownership `root:telemt`, and mode `0640`.
 
 The template content is:
 
@@ -46,8 +46,8 @@ secure = false
 tls = true
 
 [general.links]
-show = ["user_388535440"]
-public_host = "87.247.157.120"
+show = ["user_<TELEGRAM_ID>"]
+public_host = "<RUVDS2_IP>"
 public_port = 443
 
 [server]
@@ -74,8 +74,8 @@ tls_front_dir = "/opt/telemt-sch42/tlsfront"
 After copying the template, append the user entry without printing it:
 
 ```bash
-grep '^user_388535440 = "[0-9a-f]\{32\}"$' /etc/telemt/telemt.toml >> /etc/telemt-sch42/telemt.toml
-test "$(grep -c '^user_388535440 = ' /etc/telemt-sch42/telemt.toml)" -eq 1
+grep '^user_<TELEGRAM_ID> = "[0-9a-f]\{32\}"$' /etc/telemt/telemt.toml >> /etc/telemt-sch42/telemt.toml
+test "$(grep -c '^user_<TELEGRAM_ID> = ' /etc/telemt-sch42/telemt.toml)" -eq 1
 chown root:telemt /etc/telemt-sch42/telemt.toml
 chmod 0640 /etc/telemt-sch42/telemt.toml
 ```
@@ -188,7 +188,7 @@ Expected: service is `active` and sing-box listens on `0.0.0.0:29444`.
 
 ---
 
-### Task 3: Publish the endpoint on `87.247.157.120:443`
+### Task 3: Publish the endpoint on `<RUVDS2_IP>:443`
 
 **Files:**
 - Modify: RuVDS `/etc/nftables.conf`
@@ -196,7 +196,7 @@ Expected: service is `active` and sing-box listens on `0.0.0.0:29444`.
 
 **Interfaces:**
 - Consumes: working local relay `0.0.0.0:29444`.
-- Produces: public endpoint `87.247.157.120:443` without changing other destination addresses.
+- Produces: public endpoint `<RUVDS2_IP>:443` without changing other destination addresses.
 
 - [ ] **Step 1: Allow the redirected local port**
 
@@ -207,7 +207,7 @@ Run `ufw allow 29444/tcp comment 'MTProxy VK SNI sch42'` and confirm the rule is
 Back up `/etc/nftables.conf`. Insert this rule before the generic `tcp dport 443 dnat` rule:
 
 ```nft
-ip daddr 87.247.157.120 tcp dport 443 redirect to :29444 comment "MTProxy VK SNI sch42"
+ip daddr <RUVDS2_IP> tcp dport 443 redirect to :29444 comment "MTProxy VK SNI sch42"
 ```
 
 Validate with `nft -c -f /etc/nftables.conf`, then apply with `nft -f /etc/nftables.conf` only if validation succeeds.
@@ -231,16 +231,16 @@ Expected: the destination-specific rule precedes generic port `443` DNAT, and bo
 **Files:** none.
 
 **Interfaces:**
-- Consumes: telemt API `127.0.0.1:9092` and public endpoint `87.247.157.120:443`.
+- Consumes: telemt API `127.0.0.1:9092` and public endpoint `<RUVDS2_IP>:443`.
 - Produces: one test link for `@sch_42`.
 
 - [ ] **Step 1: Confirm public TCP reachability**
 
-Connect to `87.247.157.120:443` and capture only the new relay port to confirm the connection reaches `29444`.
+Connect to `<RUVDS2_IP>:443` and capture only the new relay port to confirm the connection reaches `29444`.
 
 - [ ] **Step 2: Obtain the generated TLS link**
 
-Read `/v1/users/user_388535440` from the alternate telemt API and extract its single TLS link. Do not print the raw 32-hex secret separately.
+Read `/v1/users/user_<TELEGRAM_ID>` from the alternate telemt API and extract its single TLS link. Do not print the raw 32-hex secret separately.
 
 - [ ] **Step 3: Verify after the user connects**
 
@@ -248,4 +248,4 @@ Read only `current_connections`, `recent_unique_ips`, and `total_octets` from th
 
 - [ ] **Step 4: Confirm production remains unchanged**
 
-Verify `telemt`, `sing-box-tunnel9443`, `194.87.80.237:9443`, and their listeners remain active. If any verification fails, remove the destination-specific nftables rule and stop the two alternate services.
+Verify `telemt`, `sing-box-tunnel9443`, `<RUVDS_IP>:9443`, and their listeners remain active. If any verification fails, remove the destination-specific nftables rule and stop the two alternate services.

@@ -51,14 +51,14 @@ CDN-ресурс можно поставить перед этой же вирт
 3. **Группа безопасности**: входящие `tcp/443` и `tcp/80` из `0.0.0.0/0`
    (80 нужен только для выпуска сертификата Let's Encrypt), `tcp/22` — со
    своего адреса. Исходящие — разрешить всё.
-4. **DNS**: A-запись `cdn-ru.myvpn-api.online` → публичный IP этой ВМ.
+4. **DNS**: A-запись `cdn-ru.example.com` → публичный IP этой ВМ.
    Домен наш; чужие домены и SNI не используются нигде.
 5. Прописать полученный IP в `deploy/backhaul/params.env` как `YC_VM_IP`.
 6. Запустить на ВМ `deploy/yc/install.sh` (см. ниже).
 
 Если позже захочется всё-таки CDN — открыть тикет в поддержку YC с описанием
 сценария (WebSocket-туннель, оценка трафика), после включения создать
-CDN-ресурс с источником `cdn-ru.myvpn-api.online` по HTTPS и переключить
+CDN-ресурс с источником `cdn-ru.example.com` по HTTPS и переключить
 A-запись на CDN.
 
 ## Установка на ВМ
@@ -71,9 +71,9 @@ ssh ubuntu@<YC_VM_IP> 'sudo bash /tmp/install.sh /tmp/params.env'
 Проверка снаружи:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://cdn-ru.myvpn-api.online/healthz   # 404 — это нормально
+curl -sS -o /dev/null -w '%{http_code}\n' https://cdn-ru.example.com/healthz   # 404 — это нормально
 curl -sS -i -N --http1.1 \
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'Sec-WebSocket-Version: 13' \
-  https://cdn-ru.myvpn-api.online/bhws | head -1     # ожидаем 101
+  https://cdn-ru.example.com/bhws | head -1     # ожидаем 101
 ```

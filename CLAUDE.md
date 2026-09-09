@@ -61,7 +61,9 @@ Drives both sing-box config generation and subscription links. Key fields:
 
 ## Environment Variables
 
-Required: `BOT_TOKEN`, `ADMIN_PASSWORD`, `JWT_SECRET`, `SERVER_IP` (default: 49.13.201.110), `ADMIN_ID` (Telegram ID).
+No server addresses, keys or IDs are hard-coded anywhere in the repository: everything comes from the environment (`.env`, written by the deploy workflow from GitHub Secrets) or is generated on first run (Reality keypair, short_id, user UUIDs).
+
+Required: `BOT_TOKEN`, `ADMIN_PASSWORD`, `JWT_SECRET`, `SERVER_IP` (no default — the process exits if unset), `ADMIN_ID` (Telegram ID).
 
 ### Config generation (etap 1 rework)
 
@@ -73,8 +75,8 @@ Note: these are relevant only if `vpnbot` binary runs on that host. Currently `v
 ### Network Management (optional)
 
 - `HETZNER_API_TOKEN` — Hetzner Cloud API token for firewall management (`service/firewall.go`)
-- `HETZNER_SERVER_IP` — Hetzner server IP (default: falls back to `SERVER_IP` → 49.13.201.110)
-- `RUVDS_IP` — RuVDS public IP (194.87.80.237)
+- `HETZNER_SERVER_IP` — Hetzner server IP (default: falls back to `SERVER_IP`)
+- `RUVDS_IP` — RuVDS public IP
 - `RUVDS_SSH_USER` — SSH user (default: root)
 - `RUVDS_SSH_KEY_PATH` — Path to SSH private key (default: ~/.ssh/id_rsa)
 - `RUVDS_SSH_PORT` — SSH port (default: 22)
@@ -83,8 +85,8 @@ Note: these are relevant only if `vpnbot` binary runs on that host. Currently `v
 
 Two servers, complementary roles:
 
-- **RuVDS** (194.87.80.237, RU): Frontend — clients connect here. Runs sing-box; config is written by Hetzner's `vpnbot` via SSH (`service/singboxruvds.go` → `GenerateAndReloadRuVDS()`). Terminates VLESS Reality + ShadowTLS handshakes.
-- **Hetzner** (49.13.201.110, DE): Backend — runs `vpnbot`, admin API (Caddy TLS on `myvpn-api.online:8443` → `:8085`), Telegram bot. Also runs sing-box as fallback / WireGuard exit for the tunnel from RuVDS. Kernel WG via `wg-quick@wg0` + iptables MASQUERADE.
+- **RuVDS** (RU): Frontend — clients connect here. Runs sing-box; config is written by Hetzner's `vpnbot` via SSH (`service/singboxruvds.go` → `GenerateAndReloadRuVDS()`). Terminates VLESS Reality + ShadowTLS handshakes.
+- **Hetzner** (DE): Backend — runs `vpnbot`, admin API (Caddy TLS on `<API_DOMAIN>:8443` → `:8085`), Telegram bot. Also runs sing-box as fallback / WireGuard exit for the tunnel from RuVDS. Kernel WG via `wg-quick@wg0` + iptables MASQUERADE.
 
 ### Traffic paths
 
@@ -124,7 +126,7 @@ Manual verification remains critical for changes affecting sing-box behavior —
 - Sing-box RuVDS: `/api/singbox/ruvds/{setup,reload,start,stop,status,config}` — управление зеркалом sing-box на RuVDS через SSH
 - Telemt RuVDS: `/api/telemt/ruvds/{setup,reload,start,stop,status}` — управление зеркалом MTProto на RuVDS через SSH
 
-Server listens on `:8085` (proxied via Caddy on `myvpn-api.online:8443`).
+Server listens on `:8085` (proxied via Caddy on `<API_DOMAIN>:8443`).
 
 ## Language
 

@@ -316,11 +316,11 @@ func TestGenerateLinkForInbound_ShadowTLS(t *testing.T) {
 		InnerPassword:     "inner-pass",
 	}
 	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
-	link := GenerateLinkForInbound(ib, user, "194.87.80.237")
+	link := GenerateLinkForInbound(ib, user, "198.51.100.7")
 	if !strings.HasPrefix(link, "ss://") {
 		t.Fatalf("expected ss:// URI, got %q", link)
 	}
-	if !strings.Contains(link, "194.87.80.237:8446") {
+	if !strings.Contains(link, "198.51.100.7:8446") {
 		t.Fatalf("expected server:port in host, got %s", link)
 	}
 	if !strings.Contains(link, "#ru-stls-v3") {
@@ -352,8 +352,8 @@ func TestGenerateLinkForInbound_DefaultFingerprintIsChrome(t *testing.T) {
 		TLSType:          "reality",
 		SNI:              "cdn.moskva.live",
 		UserType:         "new",
-		RealityPublicKey: "BgLsjp3u0Mjk3BqLs7kopcAOF6KOyx14lxHlP7e_yxo",
-		RealityShortIDs:  database.JSONStringArray{"207fc82a9f9e741f"},
+		RealityPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		RealityShortIDs:  database.JSONStringArray{"0123456789abcdef"},
 		// Fingerprint намеренно не задан.
 	}
 	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}

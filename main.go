@@ -13,6 +13,11 @@ import (
 )
 
 func main() {
+	// Адреса серверов задаются только окружением — в коде дефолтов нет.
+	if os.Getenv("SERVER_IP") == "" {
+		log.Fatal("SERVER_IP is required (see .env.example)")
+	}
+
 	database.Init("vpn.db")
 
 	err := service.GenerateAndReload()
@@ -48,7 +53,7 @@ func main() {
 	}
 
 	botToken := os.Getenv("BOT_TOKEN")
-	adminID := int64(124343839)
+	var adminID int64
 	if envAdminID := os.Getenv("ADMIN_ID"); envAdminID != "" {
 		if parsed, err := strconv.ParseInt(envAdminID, 10, 64); err == nil {
 			adminID = parsed

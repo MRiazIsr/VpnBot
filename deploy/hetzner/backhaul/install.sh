@@ -214,9 +214,10 @@ cp "$CADDYFILE" "$CADDY_PRE"
 backup "$CADDYFILE"
 
 # Снимаем эталон: как сайт отвечает ДО наших правок.
+require HETZNER_ORIGIN
 caddy_probe() {
   curl -sS --max-time 8 -o /dev/null -w '%{http_code}' \
-    "https://${HETZNER_ORIGIN:-myvpn-api.online:8443}/" 2>/dev/null || echo "000"
+    "https://${HETZNER_ORIGIN}/" 2>/dev/null || echo "000"
 }
 CADDY_BEFORE="$(caddy_probe)"
 log "Caddy до правки отвечает: HTTP ${CADDY_BEFORE}"
@@ -230,13 +231,13 @@ restore_caddy() {
 if grep -q "handle ${BHWS_PATH}" "$CADDYFILE"; then
   log "маршрут ${BHWS_PATH} уже есть, пропускаем"
 else
-  # Вставляем handle ПЕРВЫМ блоком внутри существующего сайта myvpn-api.online,
+  # Вставляем handle ПЕРВЫМ блоком внутри существующего сайта ${HETZNER_ORIGIN},
   # чтобы reverse_proxy на 8085 не перехватил WebSocket-апгрейд.
-  python3 - "$CADDYFILE" "$BHWS_PATH" "$BHWS_BACKEND_PORT" <<'PY'
+  python3 - "$CADDYFILE" "$BHWS_PATH" "$BHWS_BACKEND_PORT" "$HETZNER_ORIGIN" <<'PY'
 import sys, re
-path, wspath, port = sys.argv[1], sys.argv[2], sys.argv[3]
+path, wspath, port, origin = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 src = open(path).read()
-marker = "myvpn-api.online:8443 {"
+marker = origin + " {"
 i = src.index(marker) + len(marker)
 block = f"""
 \t# backhaul secondary: WSS-плечо RuVDS → Yandex Cloud → сюда.

@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Install an isolated Smart SYN limiter for `87.247.157.120:443` on RuVDS so the affected Android/MegaFon client can retry MTProxy handshakes without changing the primary MTProxy or VPN.
+**Goal:** Install an isolated Smart SYN limiter for `<RUVDS2_IP>:443` on RuVDS so the affected Android/MegaFon client can retry MTProxy handshakes without changing the primary MTProxy or VPN.
 
-**Architecture:** Add one dedicated nftables table on RuVDS in the input hook after the existing redirect to the dedicated telemt listener. Match the conntrack original destination `87.247.157.120:443` plus the translated port `29444`, meter new TCP SYN packets per IPv4 source at `54/minute burst 1`, and immediately reject excess SYNs. A oneshot systemd unit owns only this table, making persistence and rollback independent from telemt and the current firewall.
+**Architecture:** Add one dedicated nftables table on RuVDS in the input hook after the existing redirect to the dedicated telemt listener. Match the conntrack original destination `<RUVDS2_IP>:443` plus the translated port `29444`, meter new TCP SYN packets per IPv4 source at `54/minute burst 1`, and immediately reject excess SYNs. A oneshot systemd unit owns only this table, making persistence and rollback independent from telemt and the current firewall.
 
 **Tech Stack:** nftables, systemd, OpenSSH, telemt 3.4.24
 
 ## Global Constraints
 
-- Apply only to destination `87.247.157.120`, TCP port `443`.
+- Apply only to destination `<RUVDS2_IP>`, TCP port `443`.
 - Do not edit telemt configuration, VPN configuration, Hetzner, bot output, or existing nftables tables.
 - Preserve the current `client_mss` settings during this first test so only SYN handling changes.
 - Save timestamped backups of `/etc/telemt/telemt.toml` and the complete nftables ruleset before applying the rule.
@@ -39,7 +39,7 @@ awk '/^\[access.users\]$/ { print; print "[REDACTED]"; exit } { print }' /etc/te
 nft -a list ruleset
 ```
 
-Expected: `87.247.157.120` is local, `telemt-sch42-direct` is active on `29444`, and an existing rule redirects public TCP `443` to that dedicated listener.
+Expected: `<RUVDS2_IP>` is local, `telemt-sch42-direct` is active on `29444`, and an existing rule redirects public TCP `443` to that dedicated listener.
 
 - [x] **Step 2: Save timestamped backups before mutation**
 
@@ -67,7 +67,7 @@ The script must:
 
 1. delete only `table inet mtproxy_smart_syn_alt` if it already exists;
 2. create a base chain in the input hook, where `reject` is supported by the server's nftables 0.9.3/kernel combination;
-3. match only initial SYN packets whose conntrack original destination is `87.247.157.120:443` and whose translated destination port is `29444`;
+3. match only initial SYN packets whose conntrack original destination is `<RUVDS2_IP>:443` and whose translated destination port is `29444`;
 4. meter packets per `ip saddr` at `54/minute burst 1 packets`, with a 60-second timeout;
 5. count allowed packets and reject only over-limit matching SYNs with `icmp type host-unreachable`;
 6. support `start` and `stop` actions for deterministic rollback.
@@ -104,7 +104,7 @@ Expected: only the alternative original destination and dedicated translated por
 - [x] **Step 1: Check TCP reachability from outside RuVDS**
 
 ```bash
-nc -vz -w 5 87.247.157.120 443
+nc -vz -w 5 <RUVDS2_IP> 443
 ```
 
 Expected: TCP connection succeeds.

@@ -2,7 +2,7 @@
 
 ## Context
 
-`@sch_42` can use the existing MTProxy over Wi-Fi but not through MegaFon. Packet captures show that MegaFon reaches the RuVDS endpoint and exchanges TCP payload, while the existing `telemt` service accepts the user's secret and records traffic. Changing only the public IP from `194.87.80.237` to `87.247.157.120` did not help because both links still use port `9443`, the same FakeTLS SNI (`lk.rt.ru`), and the same tunnel path.
+`@sch_42` can use the existing MTProxy over Wi-Fi but not through MegaFon. Packet captures show that MegaFon reaches the RuVDS endpoint and exchanges TCP payload, while the existing `telemt` service accepts the user's secret and records traffic. Changing only the public IP from `<RUVDS_IP>` to `<RUVDS2_IP>` did not help because both links still use port `9443`, the same FakeTLS SNI (`lk.rt.ru`), and the same tunnel path.
 
 The existing production path must remain unchanged:
 
@@ -10,9 +10,9 @@ The existing production path must remain unchanged:
 
 ## Goal
 
-Create an isolated experimental MTProxy link for Telegram user `user_388535440` with:
+Create an isolated experimental MTProxy link for Telegram user `user_<TELEGRAM_ID>` with:
 
-- public endpoint `87.247.157.120:443`;
+- public endpoint `<RUVDS2_IP>:443`;
 - FakeTLS SNI `vk.com`;
 - the user's existing 32-hex secret;
 - separate services and statistics;
@@ -30,15 +30,15 @@ Adding the link to the bot is out of scope until the user confirms that the expe
 
 The experimental path is:
 
-`@sch_42 -> 87.247.157.120:443 -> nftables -> sing-box-mt-vk:29444 -> existing Reality/VLESS entry on Hetzner:8765 -> telemt-sch42:19444`
+`@sch_42 -> <RUVDS2_IP>:443 -> nftables -> sing-box-mt-vk:29444 -> existing Reality/VLESS entry on Hetzner:8765 -> telemt-sch42:19444`
 
 ### RuVDS
 
 - Add a destination-specific nftables rule before the generic port-`443` DNAT rule:
-  - destination `87.247.157.120`;
+  - destination `<RUVDS2_IP>`;
   - TCP destination port `443`;
   - redirect to local port `29444`.
-- Keep `194.87.80.237:443` and all existing VPN forwarding unchanged.
+- Keep `<RUVDS_IP>:443` and all existing VPN forwarding unchanged.
 - Run a new `sing-box-mt-vk.service` using its own config.
 - The new sing-box direct inbound listens on `0.0.0.0:29444`, overrides the destination to `127.0.0.1:19444`, and uses the existing Reality/VLESS tunnel credentials for Hetzner port `8765`.
 - Allow TCP port `29444` through the local firewall.
@@ -49,13 +49,13 @@ The experimental path is:
 - Listen only on `127.0.0.1:19444`; the port is not exposed publicly.
 - Enable only TLS mode with `tls_domain = "vk.com"`.
 - Enable masking and TLS emulation, with a dedicated TLS-front cache directory.
-- Configure only `user_388535440` with the existing secret.
+- Configure only `user_<TELEGRAM_ID>` with the existing secret.
 - Bind the local API to `127.0.0.1:9092`, whitelist loopback only, and use it only for isolated connection and octet counters.
-- Set generated-link metadata to public host `87.247.157.120` and public port `443`.
+- Set generated-link metadata to public host `<RUVDS2_IP>` and public port `443`.
 
 ## Link
 
-The test link uses the standard telemt FakeTLS format with server `87.247.157.120`, port `443`, and a `secret` value built from the `ee` prefix, the user's existing 32-hex secret, and the hexadecimal encoding of `vk.com`.
+The test link uses the standard telemt FakeTLS format with server `<RUVDS2_IP>`, port `443`, and a `secret` value built from the `ee` prefix, the user's existing 32-hex secret, and the hexadecimal encoding of `vk.com`.
 
 The raw secret is read from the production telemt configuration during deployment and must not be copied into this design document, local files, or command output.
 
@@ -64,16 +64,16 @@ The raw secret is read from the production telemt configuration during deploymen
 - Create timestamped backups of every modified remote configuration.
 - Validate the alternate telemt service and confirm `127.0.0.1:19444` and `127.0.0.1:9092` are listening before changing nftables.
 - Validate the new sing-box config and confirm `0.0.0.0:29444` is listening before adding the public redirect.
-- Validate the complete nftables file before applying it, and place the specific `87.247.157.120:443` rule before the generic port-`443` DNAT rule.
+- Validate the complete nftables file before applying it, and place the specific `<RUVDS2_IP>:443` rule before the generic port-`443` DNAT rule.
 - Do not restart or reload the existing `telemt`, `sing-box-tunnel9443`, nginx, or VPN services.
 
 ## Verification
 
 1. Confirm both new systemd units remain active and their expected ports are listening.
-2. Confirm a TCP connection to `87.247.157.120:443` reaches `sing-box-mt-vk:29444`.
+2. Confirm a TCP connection to `<RUVDS2_IP>:443` reaches `sing-box-mt-vk:29444`.
 3. Open the generated link on the user's phone through MegaFon.
-4. Confirm the dedicated telemt API reports active connections for `user_388535440` and an increasing octet counter.
-5. Confirm the original `194.87.80.237:9443` endpoint and existing service listeners remain unchanged.
+4. Confirm the dedicated telemt API reports active connections for `user_<TELEGRAM_ID>` and an increasing octet counter.
+5. Confirm the original `<RUVDS_IP>:9443` endpoint and existing service listeners remain unchanged.
 
 Success means Telegram becomes usable through MegaFon with the dedicated link while existing users continue to use the original endpoint without interruption.
 

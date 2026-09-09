@@ -628,7 +628,7 @@ Expected: файл `/tmp/vpnbot-new` создан (~30 MB).
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); print(json.dumps([o for o in c[\"outbounds\"] if o[\"tag\"]==\"wg-out\"][0]))'" > /tmp/wg-out.json
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); print(json.dumps([o for o in c[\"outbounds\"] if o[\"tag\"]==\"wg-out\"][0]))'" > /tmp/wg-out.json
 cat /tmp/wg-out.json
 ```
 Expected: одна строка JSON с wg-outbound (type=wireguard, tag=wg-out и полями server/server_port/local_address/private_key/peer_public_key).
@@ -637,9 +637,9 @@ Expected: одна строка JSON с wg-outbound (type=wireguard, tag=wg-out 
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "mkdir -p /etc/vpnbot"
-scp -i ~/.ssh/ruvds /tmp/wg-out.json root@194.87.80.237:/etc/vpnbot/extra-outbound.json
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "grep -q EXTRA_OUTBOUND_JSON_PATH /opt/VpnBot/.env || echo -e 'EXTRA_OUTBOUND_JSON_PATH=/etc/vpnbot/extra-outbound.json\nROUTE_FINAL=wg-out' >> /opt/VpnBot/.env && grep -E '^(EXTRA_OUTBOUND_JSON_PATH|ROUTE_FINAL)=' /opt/VpnBot/.env"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "mkdir -p /etc/vpnbot"
+scp -i ~/.ssh/ruvds /tmp/wg-out.json root@<RUVDS_IP>:/etc/vpnbot/extra-outbound.json
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "grep -q EXTRA_OUTBOUND_JSON_PATH /opt/VpnBot/.env || echo -e 'EXTRA_OUTBOUND_JSON_PATH=/etc/vpnbot/extra-outbound.json\nROUTE_FINAL=wg-out' >> /opt/VpnBot/.env && grep -E '^(EXTRA_OUTBOUND_JSON_PATH|ROUTE_FINAL)=' /opt/VpnBot/.env"
 ```
 Expected: обе ENV в файле `/opt/VpnBot/.env`.
 
@@ -647,8 +647,8 @@ Expected: обе ENV в файле `/opt/VpnBot/.env`.
 
 Run:
 ```bash
-scp -i ~/.ssh/hertzner-ubuntu /tmp/vpnbot-new root@49.13.201.110:/opt/VpnBot/app_bin.new
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot && sleep 3 && systemctl is-active vpnbot"
+scp -i ~/.ssh/hertzner-ubuntu /tmp/vpnbot-new root@<HETZNER_IP>:/opt/VpnBot/app_bin.new
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot && sleep 3 && systemctl is-active vpnbot"
 ```
 Expected: `active`.
 
@@ -656,8 +656,8 @@ Expected: `active`.
 
 Run:
 ```bash
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "curl -sS -X POST -H 'Authorization: Bearer $(curl -sS -X POST http://127.0.0.1:8085/api/login -H \"Content-Type: application/json\" -d \"{\\\"password\\\":\\\"$(grep ADMIN_PASSWORD /opt/VpnBot/.env | cut -d= -f2)\\\"}\" | jq -r .token)' http://127.0.0.1:8085/api/reload"
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); print(\"inbounds=\", len(c[\"inbounds\"])); print(\"outbounds=\", [o.get(\"tag\") for o in c[\"outbounds\"]]); print(\"final=\", c[\"route\"][\"final\"])'"
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "curl -sS -X POST -H 'Authorization: Bearer $(curl -sS -X POST http://127.0.0.1:8085/api/login -H \"Content-Type: application/json\" -d \"{\\\"password\\\":\\\"$(grep ADMIN_PASSWORD /opt/VpnBot/.env | cut -d= -f2)\\\"}\" | jq -r .token)' http://127.0.0.1:8085/api/reload"
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); print(\"inbounds=\", len(c[\"inbounds\"])); print(\"outbounds=\", [o.get(\"tag\") for o in c[\"outbounds\"]]); print(\"final=\", c[\"route\"][\"final\"])'"
 ```
 Expected: `inbounds=10`, `outbounds=[direct, block]` (без wg-out — на Hetzner ENV пусты), `final=direct`. Новые direct-exit инбаунды disabled, не эмитятся.
 
@@ -665,8 +665,8 @@ Expected: `inbounds=10`, `outbounds=[direct, block]` (без wg-out — на Het
 
 Run:
 ```bash
-scp -i ~/.ssh/ruvds /tmp/vpnbot-new root@194.87.80.237:/opt/VpnBot/app_bin.new
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot && sleep 3 && systemctl is-active vpnbot"
+scp -i ~/.ssh/ruvds /tmp/vpnbot-new root@<RUVDS_IP>:/opt/VpnBot/app_bin.new
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot && sleep 3 && systemctl is-active vpnbot"
 ```
 Expected: `active`.
 
@@ -674,19 +674,19 @@ Expected: `active`.
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "curl -sS -X POST -H 'Authorization: Bearer $(curl -sS -X POST http://127.0.0.1:8085/api/login -H \"Content-Type: application/json\" -d \"{\\\"password\\\":\\\"$(grep ADMIN_PASSWORD /opt/VpnBot/.env | cut -d= -f2)\\\"}\" | jq -r .token)' http://127.0.0.1:8085/api/reload"
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); print(\"inbounds=\", len(c[\"inbounds\"])); print(\"outbounds=\", [o.get(\"tag\") for o in c[\"outbounds\"]]); print(\"final=\", c[\"route\"][\"final\"]); print(\"bogon_rules=\", sum(1 for r in c[\"route\"][\"rules\"] if r.get(\"outbound\")==\"block\"))'"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "curl -sS -X POST -H 'Authorization: Bearer $(curl -sS -X POST http://127.0.0.1:8085/api/login -H \"Content-Type: application/json\" -d \"{\\\"password\\\":\\\"$(grep ADMIN_PASSWORD /opt/VpnBot/.env | cut -d= -f2)\\\"}\" | jq -r .token)' http://127.0.0.1:8085/api/reload"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); print(\"inbounds=\", len(c[\"inbounds\"])); print(\"outbounds=\", [o.get(\"tag\") for o in c[\"outbounds\"]]); print(\"final=\", c[\"route\"][\"final\"]); print(\"bogon_rules=\", sum(1 for r in c[\"route\"][\"rules\"] if r.get(\"outbound\")==\"block\"))'"
 ```
 Expected: `inbounds=10`, `outbounds=[wg-out, direct, block]`, `final=wg-out`, `bogon_rules=1`.
 
 - [ ] **Step 8: Smoke test — существующий пользователь по-прежнему выходит через Hetzner**
 
-**Manual verification (пользователь):** подключиться к любому существующему инбаунду (например, VLESS Reality TCP :8444) → `curl ipinfo.io/json` в клиенте → **IP должен быть 49.13.201.110** (Hetzner). Если RuVDS IP (194.87.80.237) — wg-туннель разорван, откат: Step 9.
+**Manual verification (пользователь):** подключиться к любому существующему инбаунду (например, VLESS Reality TCP :8444) → `curl ipinfo.io/json` в клиенте → **IP должен быть <HETZNER_IP>** (Hetzner). Если RuVDS IP (<RUVDS_IP>) — wg-туннель разорван, откат: Step 9.
 
 - [ ] **Step 9 (only on failure): Rollback**
 
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "mv /opt/VpnBot/app_bin.bak /opt/VpnBot/app_bin && systemctl restart vpnbot && curl -sS -X POST http://127.0.0.1:8085/api/reload"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "mv /opt/VpnBot/app_bin.bak /opt/VpnBot/app_bin && systemctl restart vpnbot && curl -sS -X POST http://127.0.0.1:8085/api/reload"
 ```
 
 ---
@@ -697,8 +697,8 @@ ssh -i ~/.ssh/ruvds root@194.87.80.237 "mv /opt/VpnBot/app_bin.bak /opt/VpnBot/a
 
 Run:
 ```bash
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "sing-box generate reality-keypair" > /tmp/reality-1.txt
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "sing-box generate reality-keypair" > /tmp/reality-2.txt
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "sing-box generate reality-keypair" > /tmp/reality-1.txt
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "sing-box generate reality-keypair" > /tmp/reality-2.txt
 cat /tmp/reality-1.txt /tmp/reality-2.txt
 openssl rand -hex 8 > /tmp/short-1.txt
 openssl rand -hex 8 > /tmp/short-2.txt
@@ -711,16 +711,16 @@ Expected: два блока с `PrivateKey:` и `PublicKey:`, два short_id.
 
 Run (для Hetzner и повторить для RuVDS):
 ```bash
-TOKEN=$(curl -sS -X POST http://49.13.201.110:8085/api/login -H 'Content-Type: application/json' -d "{\"password\":\"$(ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 'grep ADMIN_PASSWORD /opt/VpnBot/.env | cut -d= -f2')\"}" | jq -r .token)
+TOKEN=$(curl -sS -X POST http://<HETZNER_IP>:8085/api/login -H 'Content-Type: application/json' -d "{\"password\":\"$(ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> 'grep ADMIN_PASSWORD /opt/VpnBot/.env | cut -d= -f2')\"}" | jq -r .token)
 # получить ID двух direct-exit инбаундов
-curl -sS -H "Authorization: Bearer $TOKEN" http://49.13.201.110:8085/api/inbounds | jq '.[] | select(.tag | startswith("vless-direct")) | {id, tag}'
+curl -sS -H "Authorization: Bearer $TOKEN" http://<HETZNER_IP>:8085/api/inbounds | jq '.[] | select(.tag | startswith("vless-direct")) | {id, tag}'
 # для каждого — PUT с настоящими ключами и enabled=true
 curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  http://49.13.201.110:8085/api/inbounds/{id_xhttp} \
+  http://<HETZNER_IP>:8085/api/inbounds/{id_xhttp} \
   -d '{"reality_private_key":"<priv1>","reality_public_key":"<pub1>","reality_short_ids":["<short1>"],"enabled":true}'
 # аналогично для id_tcp с priv2/pub2/short2
 # reload
-curl -sS -X POST -H "Authorization: Bearer $TOKEN" http://49.13.201.110:8085/api/reload
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" http://<HETZNER_IP>:8085/api/reload
 ```
 Expected: `200 OK`, конфиг перегенерирован.
 
@@ -728,14 +728,14 @@ Expected: `200 OK`, конфиг перегенерирован.
 
 Run:
 ```bash
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "ufw allow 2059/tcp comment 'direct-exit-xhttp'; ufw allow 2060/tcp comment 'direct-exit-tcp'"
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "ufw allow 2059/tcp comment 'direct-exit-xhttp'; ufw allow 2060/tcp comment 'direct-exit-tcp'"
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "ufw allow 2059/tcp comment 'direct-exit-xhttp'; ufw allow 2060/tcp comment 'direct-exit-tcp'"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "ufw allow 2059/tcp comment 'direct-exit-xhttp'; ufw allow 2060/tcp comment 'direct-exit-tcp'"
 ```
 Expected: `Rules updated`.
 
 - [ ] **Step 4: Manual verify — direct-exit из RuVDS**
 
-**Manual (пользователь):** подписаться на новый inbound (subscription-ссылка перегенерируется автоматически), импортировать в клиент, подключиться к `vless-direct-xhttp` на порту 2059 сервера **194.87.80.237** → `curl ipinfo.io/json` → **должен быть 194.87.80.237** (RuVDS, российский IP).
+**Manual (пользователь):** подписаться на новый inbound (subscription-ссылка перегенерируется автоматически), импортировать в клиент, подключиться к `vless-direct-xhttp` на порту 2059 сервера **<RUVDS_IP>** → `curl ipinfo.io/json` → **должен быть <RUVDS_IP>** (RuVDS, российский IP).
 
 - [ ] **Step 5: Commit deploy log (без секретов)**
 
@@ -914,10 +914,10 @@ Modify seed `vless-direct-xhttp` в `database/database.go`:
 Run:
 ```bash
 cd /home/markriaz/vpn-backend-tg-bot && GOOS=linux GOARCH=amd64 go build -o /tmp/vpnbot-new .
-scp -i ~/.ssh/hertzner-ubuntu /tmp/vpnbot-new root@49.13.201.110:/opt/VpnBot/app_bin.new
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak2 && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot"
-scp -i ~/.ssh/ruvds /tmp/vpnbot-new root@194.87.80.237:/opt/VpnBot/app_bin.new
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak2 && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot"
+scp -i ~/.ssh/hertzner-ubuntu /tmp/vpnbot-new root@<HETZNER_IP>:/opt/VpnBot/app_bin.new
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak2 && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot"
+scp -i ~/.ssh/ruvds /tmp/vpnbot-new root@<RUVDS_IP>:/opt/VpnBot/app_bin.new
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak2 && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot"
 ```
 
 - [ ] **Step 3: Update existing direct-exit rows via API**
@@ -926,25 +926,25 @@ ssh -i ~/.ssh/ruvds root@194.87.80.237 "cp /opt/VpnBot/app_bin /opt/VpnBot/app_b
 
 ```bash
 # Hetzner
-TOKEN=$(curl -sS -X POST http://49.13.201.110:8085/api/login -H 'Content-Type: application/json' -d '{"password":"..."}' | jq -r .token)
-ID_XHTTP=$(curl -sS -H "Authorization: Bearer $TOKEN" http://49.13.201.110:8085/api/inbounds | jq -r '.[] | select(.tag=="vless-direct-xhttp") | .id')
+TOKEN=$(curl -sS -X POST http://<HETZNER_IP>:8085/api/login -H 'Content-Type: application/json' -d '{"password":"..."}' | jq -r .token)
+ID_XHTTP=$(curl -sS -H "Authorization: Bearer $TOKEN" http://<HETZNER_IP>:8085/api/inbounds | jq -r '.[] | select(.tag=="vless-direct-xhttp") | .id')
 curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  http://49.13.201.110:8085/api/inbounds/$ID_XHTTP \
+  http://<HETZNER_IP>:8085/api/inbounds/$ID_XHTTP \
   -d '{"multiplex":true,"mux_padding":true,"mux_max_streams":8,"fingerprint":"chrome"}'
 
-ID_TCP=$(curl -sS -H "Authorization: Bearer $TOKEN" http://49.13.201.110:8085/api/inbounds | jq -r '.[] | select(.tag=="vless-direct-tcp") | .id')
+ID_TCP=$(curl -sS -H "Authorization: Bearer $TOKEN" http://<HETZNER_IP>:8085/api/inbounds | jq -r '.[] | select(.tag=="vless-direct-tcp") | .id')
 curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  http://49.13.201.110:8085/api/inbounds/$ID_TCP \
+  http://<HETZNER_IP>:8085/api/inbounds/$ID_TCP \
   -d '{"fingerprint":"chrome"}'
-curl -sS -X POST -H "Authorization: Bearer $TOKEN" http://49.13.201.110:8085/api/reload
-# Повторить для RuVDS (194.87.80.237)
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" http://<HETZNER_IP>:8085/api/reload
+# Повторить для RuVDS (<RUVDS_IP>)
 ```
 
 - [ ] **Step 4: Verify config has padding**
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); [print(i[\"tag\"], i.get(\"multiplex\")) for i in c[\"inbounds\"] if i[\"tag\"].startswith(\"vless-direct\")]'"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); [print(i[\"tag\"], i.get(\"multiplex\")) for i in c[\"inbounds\"] if i[\"tag\"].startswith(\"vless-direct\")]'"
 ```
 Expected:
 ```
@@ -1077,7 +1077,7 @@ git commit -m "chore(deploy): add zapret/nfqws artifacts for RuVDS"
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "test -d /root/vpn-backend-tg-bot || git clone https://github.com/markriaz13/vpn-backend-tg-bot /root/vpn-backend-tg-bot; cd /root/vpn-backend-tg-bot && git pull"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "test -d /root/vpn-backend-tg-bot || git clone https://github.com/markriaz13/vpn-backend-tg-bot /root/vpn-backend-tg-bot; cd /root/vpn-backend-tg-bot && git pull"
 ```
 Expected: репо на месте.
 
@@ -1085,7 +1085,7 @@ Expected: репо на месте.
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "apt install -y build-essential gcc libnetfilter-queue-dev && test -d /opt/zapret || git clone https://github.com/bol-van/zapret /opt/zapret && cd /opt/zapret && make -C nfq && ls -l /opt/zapret/nfq/nfqws"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "apt install -y build-essential gcc libnetfilter-queue-dev && test -d /opt/zapret || git clone https://github.com/bol-van/zapret /opt/zapret && cd /opt/zapret && make -C nfq && ls -l /opt/zapret/nfq/nfqws"
 ```
 Expected: файл `/opt/zapret/nfq/nfqws` собран.
 
@@ -1093,7 +1093,7 @@ Expected: файл `/opt/zapret/nfq/nfqws` собран.
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "cp /root/vpn-backend-tg-bot/deploy/ruvds/zapret/nfqws.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now nfqws && sleep 2 && systemctl is-active nfqws"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "cp /root/vpn-backend-tg-bot/deploy/ruvds/zapret/nfqws.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now nfqws && sleep 2 && systemctl is-active nfqws"
 ```
 Expected: `active`.
 
@@ -1101,7 +1101,7 @@ Expected: `active`.
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "cp /root/vpn-backend-tg-bot/deploy/ruvds/zapret/nftables-nfqws.rules /etc/nftables-nfqws.rules && nft -f /etc/nftables-nfqws.rules && nft list ruleset | grep -A 4 'table inet zapret'"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "cp /root/vpn-backend-tg-bot/deploy/ruvds/zapret/nftables-nfqws.rules /etc/nftables-nfqws.rules && nft -f /etc/nftables-nfqws.rules && nft list ruleset | grep -A 4 'table inet zapret'"
 ```
 Expected: правила применены, счётчики видны.
 
@@ -1109,15 +1109,15 @@ Expected: правила применены, счётчики видны.
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "curl -sS --max-time 5 https://ipinfo.io/json"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "curl -sS --max-time 5 https://ipinfo.io/json"
 sleep 3
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "nft list ruleset | grep -A 2 'oifname \"eth0\"'"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "nft list ruleset | grep -A 2 'oifname \"eth0\"'"
 ```
 Expected: счётчик пакетов на nftables-правиле > 0.
 
 - [ ] **Step 6: Verify wg-туннель НЕ затронут**
 
-**Manual (пользователь):** подключиться к существующему инбаунду (Hetzner-exit) → `curl ipinfo.io/json` → **всё ещё 49.13.201.110**. Если отвалилось — nftables правило зацепило wg0 некорректно, откат: `ssh ...ruvds "systemctl stop nfqws && nft delete table inet zapret"`.
+**Manual (пользователь):** подключиться к существующему инбаунду (Hetzner-exit) → `curl ipinfo.io/json` → **всё ещё <HETZNER_IP>**. Если отвалилось — nftables правило зацепило wg0 некорректно, откат: `ssh ...ruvds "systemctl stop nfqws && nft delete table inet zapret"`.
 
 - [ ] **Step 7: Manual verify — Reels/YouTube через direct-exit не залипают**
 
@@ -1345,7 +1345,7 @@ func TestGenerateLinkForInbound_ShadowTLS(t *testing.T) {
 		InnerPassword:     "inner-pass",
 	}
 	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
-	link := GenerateLinkForInbound(ib, user, "194.87.80.237")
+	link := GenerateLinkForInbound(ib, user, "<RUVDS_IP>")
 	if !strings.HasPrefix(link, "sing-box://") {
 		t.Fatalf("expected sing-box://, got %q", link)
 	}
@@ -1355,7 +1355,7 @@ func TestGenerateLinkForInbound_ShadowTLS(t *testing.T) {
 		t.Fatalf("payload not base64: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, `"server":"194.87.80.237"`) {
+	if !strings.Contains(got, `"server":"<RUVDS_IP>"`) {
 		t.Fatalf("expected server IP, got %s", got)
 	}
 	if !strings.Contains(got, `"password":"outer-pass"`) {
@@ -1486,10 +1486,10 @@ git commit -m "feat(seed): add 1 ShadowTLS v3 direct-exit inbound (disabled)"
 Run:
 ```bash
 cd /home/markriaz/vpn-backend-tg-bot && GOOS=linux GOARCH=amd64 go build -o /tmp/vpnbot-new .
-scp -i ~/.ssh/hertzner-ubuntu /tmp/vpnbot-new root@49.13.201.110:/opt/VpnBot/app_bin.new
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak3 && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot"
-scp -i ~/.ssh/ruvds /tmp/vpnbot-new root@194.87.80.237:/opt/VpnBot/app_bin.new
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak3 && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot"
+scp -i ~/.ssh/hertzner-ubuntu /tmp/vpnbot-new root@<HETZNER_IP>:/opt/VpnBot/app_bin.new
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak3 && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot"
+scp -i ~/.ssh/ruvds /tmp/vpnbot-new root@<RUVDS_IP>:/opt/VpnBot/app_bin.new
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "cp /opt/VpnBot/app_bin /opt/VpnBot/app_bin.bak3 && mv /opt/VpnBot/app_bin.new /opt/VpnBot/app_bin && systemctl restart vpnbot"
 ```
 
 - [ ] **Step 2: Generate secrets locally**
@@ -1505,29 +1505,29 @@ echo "INNER_PASS=$INNER_PASS"
 - [ ] **Step 3: Update ShadowTLS inbound on RuVDS via API + enable**
 
 ```bash
-TOKEN=$(curl -sS -X POST http://194.87.80.237:8085/api/login -H 'Content-Type: application/json' -d "{\"password\":\"...\"}" | jq -r .token)
-ID=$(curl -sS -H "Authorization: Bearer $TOKEN" http://194.87.80.237:8085/api/inbounds | jq -r '.[] | select(.tag=="vless-direct-shadowtls-v3") | .id')
+TOKEN=$(curl -sS -X POST http://<RUVDS_IP>:8085/api/login -H 'Content-Type: application/json' -d "{\"password\":\"...\"}" | jq -r .token)
+ID=$(curl -sS -H "Authorization: Bearer $TOKEN" http://<RUVDS_IP>:8085/api/inbounds | jq -r '.[] | select(.tag=="vless-direct-shadowtls-v3") | .id')
 curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  "http://194.87.80.237:8085/api/inbounds/$ID" \
+  "http://<RUVDS_IP>:8085/api/inbounds/$ID" \
   -d "{\"shadowtls_password\":\"$STLS_PASS\",\"inner_password\":\"$INNER_PASS\",\"enabled\":true}"
-curl -sS -X POST -H "Authorization: Bearer $TOKEN" http://194.87.80.237:8085/api/reload
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" http://<RUVDS_IP>:8085/api/reload
 ```
 
-Повторить для Hetzner (49.13.201.110) с теми же секретами (важно — для консистентности подписки).
+Повторить для Hetzner (<HETZNER_IP>) с теми же секретами (важно — для консистентности подписки).
 
 - [ ] **Step 4: UFW open 8446/tcp**
 
 Run:
 ```bash
-ssh -i ~/.ssh/hertzner-ubuntu root@49.13.201.110 "ufw allow 8446/tcp comment 'shadowtls-v3'"
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "ufw allow 8446/tcp comment 'shadowtls-v3'"
+ssh -i ~/.ssh/hertzner-ubuntu root@<HETZNER_IP> "ufw allow 8446/tcp comment 'shadowtls-v3'"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "ufw allow 8446/tcp comment 'shadowtls-v3'"
 ```
 
 - [ ] **Step 5: Verify sing-box config emitted paired inbounds**
 
 Run:
 ```bash
-ssh -i ~/.ssh/ruvds root@194.87.80.237 "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); [print(i.get(\"type\"), i.get(\"tag\"), i.get(\"listen_port\")) for i in c[\"inbounds\"] if \"shadowtls\" in i.get(\"tag\",\"\") or \"ss-inner\" in i.get(\"tag\",\"\")]'"
+ssh -i ~/.ssh/ruvds root@<RUVDS_IP> "python3 -c 'import json; c=json.load(open(\"/etc/sing-box/config.json\")); [print(i.get(\"type\"), i.get(\"tag\"), i.get(\"listen_port\")) for i in c[\"inbounds\"] if \"shadowtls\" in i.get(\"tag\",\"\") or \"ss-inner\" in i.get(\"tag\",\"\")]'"
 ```
 Expected:
 ```
@@ -1542,7 +1542,7 @@ shadowsocks ss-inner-vless-direct-shadowtls-v3 0
 **Manual (пользователь):**
 1. Скачать sing-box native клиент (Android/iOS/Desktop).
 2. Импортировать subscription-ссылку — должен появиться outbound `vless-direct-shadowtls-v3-out`.
-3. Подключиться → `curl ipinfo.io/json` → **194.87.80.237** (RuVDS).
+3. Подключиться → `curl ipinfo.io/json` → **<RUVDS_IP>** (RuVDS).
 4. Telegram → соединение устанавливается < 5 сек (базовая цель этапа).
 
 - [ ] **Step 7: Commit deploy log**
@@ -1564,7 +1564,7 @@ Modify `CLAUDE.md`, найти секцию "Network topology" (grep для `Cli
 ```markdown
 Network topology (2026-07-11 update): `Client → RuVDS sing-box (VLESS Reality, 10 inbounds) → WireGuard wg0 (10.8.0.0/24, UDP 51820) → Hetzner sing-box → Internet`.
 
-**Direct-exit inbounds** (added 2026-07-11): 2 VLESS + 1 ShadowTLS v3 на RuVDS c ExitOutbound="direct" — выход в интернет напрямую с российского IP 194.87.80.237.
+**Direct-exit inbounds** (added 2026-07-11): 2 VLESS + 1 ShadowTLS v3 на RuVDS c ExitOutbound="direct" — выход в интернет напрямую с российского IP <RUVDS_IP>.
 
 **Env-driven wg-out preservation:** `EXTRA_OUTBOUND_JSON_PATH=/etc/vpnbot/extra-outbound.json` + `ROUTE_FINAL=wg-out` на RuVDS сохраняют wg-outbound при автогенерации. На Hetzner эти ENV пусты.
 

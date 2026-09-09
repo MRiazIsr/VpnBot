@@ -16,10 +16,10 @@
   `libslipstream_client.so --tcp-listen-port <P> --tcp-listen-host 127.0.0.1 --domain <D> --resolver <IP>:53 --congestion-control <cc> --keep-alive-interval 400 --gso`
 - slipstream-client (rust) flags: `-l/--tcp-listen-port`, `--tcp-listen-host`, `-r/--resolver` (repeatable → multipath), `-c/--congestion-control {bbr,dcubic}`, `-g/--gso`, `-d/--domain`, `-t/--keep-alive-interval`.
 - Slipstream lib is ONLY in the `arm64-v8a` APK split (armeabi-v7a omits it).
-- Server: `e.moskva.live`, slipstream-rust slipstream-server on Hetzner `49.13.201.110`, target SOCKS5 `127.0.0.1:1080`. Server build commit must equal client submodule commit (protocol pre-1.0).
+- Server: `e.moskva.live`, slipstream-rust slipstream-server on Hetzner `<HETZNER_IP>`, target SOCKS5 `127.0.0.1:1080`. Server build commit must equal client submodule commit (protocol pre-1.0).
 - MIUI: `adb install` blocked (`INSTALL_FAILED_USER_RESTRICTED`) → install by tapping pushed APK.
 - A known-good test resolver for handshake baselines: Yandex `77.88.8.8`.
-- **EMPIRICALLY VERIFIED (Task 2, 2026-05-16) — do not change without re-verifying:** the bundled `libslipstream_client.so` is an ELF aarch64 PIE executable (runs as a CLI despite the `.so` name). At the pinned commit `b103aa66`, the handshake-success log signal is the line **`Connection ready`** (followed by an `acceptor: initial_max_streams_bidir_remote=...` line). It is NOT the literal `Connection confirmed` (that was the old EndPositive C binary's wording). All success predicates in this plan use `Connection ready` accordingly. Task 2 confirmed this exact rebuilt binary tunnels end-to-end through the live server (egress `49.13.201.110`).
+- **EMPIRICALLY VERIFIED (Task 2, 2026-05-16) — do not change without re-verifying:** the bundled `libslipstream_client.so` is an ELF aarch64 PIE executable (runs as a CLI despite the `.so` name). At the pinned commit `b103aa66`, the handshake-success log signal is the line **`Connection ready`** (followed by an `acceptor: initial_max_streams_bidir_remote=...` line). It is NOT the literal `Connection confirmed` (that was the old EndPositive C binary's wording). All success predicates in this plan use `Connection ready` accordingly. Task 2 confirmed this exact rebuilt binary tunnels end-to-end through the live server (egress `<HETZNER_IP>`).
 
 ---
 
@@ -40,7 +40,7 @@ additive; legacy untouched; submodule pinned `b103aa6`). Signed arm64-v8a
 release APK builds, contains `libslipstream_client.so`, abiFilter enforces
 arm64-only (APK 32→13.6MB). Full Kotlin (15) + Flutter (9) unit suites GREEN.
 Real-server integration `android/integration/probe_real.sh` passes
-(egress 49.13.201.110). GUI connect E2E remains a manual field step.
+(egress <HETZNER_IP>). GUI connect E2E remains a manual field step.
 
 **RESOLVED (2026-05-17):** P1 parametrized the tunnel domain to come from
 in-app user config (no embedded default; `DOMAIN_REQUIRED` if absent) and
@@ -56,7 +56,7 @@ old public fork — fork-network may cache objects) and force-pushes
 Original blocker (now resolved) was: committed code/tests/docs
 (`MainActivity.kt`, `probe_real.sh`, `DISTRIBUTION.md`, `INTEGRATION-NOTES.md`,
 tests) embed the production server domain `e.moskva.live` and Hetzner IP
-`49.13.201.110`. The fork is likely public → pushing would publicly expose
+`<HETZNER_IP>`. The fork is likely public → pushing would publicly expose
 the censorship-circumvention server (self-defeating + a real leak). Auto-mode
 hard-blocked the push (correctly). Before any push: either (a) parametrize
 domain/IP (remove hardcoding, scrub history) + push to a PRIVATE fork, or
@@ -141,7 +141,7 @@ git submodule update --init --recursive
 The server binary on Hetzner was built from `Mygod/slipstream-rust` (clone on RuVDS `/root/slipstream-rust`). Get the exact commit:
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@194.87.80.237 'cd /root/slipstream-rust && git rev-parse HEAD'
+ssh -i ~/.ssh/russian-vps root@<RUVDS_IP> 'cd /root/slipstream-rust && git rev-parse HEAD'
 ```
 
 Pin the fork's submodule to that commit:
@@ -200,7 +200,7 @@ In-app: Protocol=Slipstream, Domain=`e.moskva.live`, DNS server=`77.88.8.8`, mod
 
 - [ ] **Step 3: Verify egress through the tunnel**
 
-On the phone open `https://api.ipify.org` (or 2ip.ru). Expected: `49.13.201.110` (Hetzner). This proves toolchain + submodule pin are protocol-compatible with the live server BEFORE writing any new code. If it fails, the submodule commit is wrong — return to Task 1 Step 2.
+On the phone open `https://api.ipify.org` (or 2ip.ru). Expected: `<HETZNER_IP>` (Hetzner). This proves toolchain + submodule pin are protocol-compatible with the live server BEFORE writing any new code. If it fails, the submodule commit is wrong — return to Task 1 Step 2.
 
 ---
 
@@ -900,7 +900,7 @@ void main() {
 
 - [ ] **Step 4: Run test, verify PASS.**
 
-- [ ] **Step 5: Wire into existing connect screen + VpnService.** Replace the upstream single-DNS connect path: connect button → `ConnectController.connect()`. In `DnsttVpnService`, confirm the spawned multipath process inherits the existing app-uid routing exclusion (the upstream "app is excluded from routing"); add fail-closed: do NOT establish tun / do NOT route until a working multipath client is confirmed; on all-paths-down keep tun down (no leak) and trigger orchestrator re-discovery with exponential backoff (cap retries → error state). Manual device smoke: connect on Wi-Fi → "Защищено · выход: Германия"; egress=49.13.201.110.
+- [ ] **Step 5: Wire into existing connect screen + VpnService.** Replace the upstream single-DNS connect path: connect button → `ConnectController.connect()`. In `DnsttVpnService`, confirm the spawned multipath process inherits the existing app-uid routing exclusion (the upstream "app is excluded from routing"); add fail-closed: do NOT establish tun / do NOT route until a working multipath client is confirmed; on all-paths-down keep tun down (no leak) and trigger orchestrator re-discovery with exponential backoff (cap retries → error state). Manual device smoke: connect on Wi-Fi → "Защищено · выход: Германия"; egress=<HETZNER_IP>.
 
 - [ ] **Step 6: Commit**
 

@@ -126,7 +126,7 @@ export interface TelemetStatus {
     "id": 1,
     "telemet_config_id": 1,
     "user_id": 1,
-    "label": "user_124343839",
+    "label": "user_<TELEGRAM_ID>",
     "secret": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
     "user": {
       "id": 1,

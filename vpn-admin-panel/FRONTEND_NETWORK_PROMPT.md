@@ -23,13 +23,13 @@ GET `/api/network/status` — возвращает:
     "firewall_name": "my-fw",
     "server_id": 456,
     "server_name": "vpn-hetzner",
-    "hetzner_ip": "49.13.201.110",
+    "hetzner_ip": "<HETZNER_IP>",
     "rules": [...]
   },
   "port_forward": {
     "configured": true,
     "ruvds_ip": "1.2.3.4",
-    "hetzner_ip": "49.13.201.110",
+    "hetzner_ip": "<HETZNER_IP>",
     "rules": [...]
   }
 }
@@ -82,7 +82,7 @@ UI: кнопка "Открыть порт" → модалка с полями po
 {
   "port": 8444,
   "protocol": "tcp",
-  "destination": "49.13.201.110:8444"
+  "destination": "<HETZNER_IP>:8444"
 }
 ```
 

@@ -28,7 +28,8 @@ func GetSubscription() gin.HandlerFunc {
 
 		serverIP := os.Getenv("SERVER_IP")
 		if serverIP == "" {
-			serverIP = "49.13.201.110"
+			c.String(500, "SERVER_IP is not configured")
+			return
 		}
 
 		var inbounds []database.InboundConfig

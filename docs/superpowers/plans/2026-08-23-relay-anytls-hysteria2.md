@@ -13,8 +13,8 @@
 ## Global Constraints
 
 - **Пересобирать sing-box не нужно.** Установленный бинарь принимает `anytls`, `anytls`+reality, `hysteria2`+salamander, `hysteria2`+port hopping. Проверено 23.08.2026.
-- **Боевые адреса RuVDS:** `87.247.157.120` (рабочий), `176.113.80.243` (рабочий), `194.87.80.237` (входящий TCP заблокирован, UDP проходит). Всё SSH — только на `87.247.157.120`.
-- **Hetzner:** `49.13.201.110`, ключ `~/.ssh/cloud-hetzner-v2`, пользователь `root`.
+- **Боевые адреса RuVDS:** `<RUVDS2_IP>` (рабочий), `<RUVDS3_IP>` (рабочий), `<RUVDS_IP>` (входящий TCP заблокирован, UDP проходит). Всё SSH — только на `<RUVDS2_IP>`.
+- **Hetzner:** `<HETZNER_IP>`, ключ `~/.ssh/cloud-hetzner-v2`, пользователь `root`.
 - **RuVDS SSH:** ключ `~/.ssh/russian-vps`, пользователь `root`. Порт 22.
 - **`promote.sh` не имеет права писать в `/etc/nftables.conf`.** Это условие уровня 4 отката: перезагрузка должна возвращать DNAT.
 - **Порт 443 на RuVDS занят nginx** (`ssl_preread` по SNI). Он не может попасть в `RELAY_VLESS_PORTS` ни при каких условиях.
@@ -103,8 +103,8 @@ ok "iptables-save правил не видит — подтверждение и
 - [ ] **Step 2: Прогнать на RuVDS и убедиться, что механизм рабочий**
 
 ```bash
-scp -i ~/.ssh/russian-vps scripts/backhaul/rollback-drill.sh root@87.247.157.120:/tmp/
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 'chmod +x /tmp/rollback-drill.sh && /tmp/rollback-drill.sh'
+scp -i ~/.ssh/russian-vps scripts/backhaul/rollback-drill.sh root@<RUVDS2_IP>:/tmp/
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> 'chmod +x /tmp/rollback-drill.sh && /tmp/rollback-drill.sh'
 ```
 
 Ожидается четыре строки `ОК:` и код возврата 0, последняя строка — «iptables-save правил не видит — подтверждение исходного дефекта». Если последняя строка провалилась, значит на машине уже не legacy-iptables, и задачу надо пересмотреть.
@@ -236,7 +236,7 @@ scripts/backhaul/rollback-drill.sh доказывает работоспособ
 
 **2059, 2060, 8446** — это RU, RU-TCP и RU-STLS. Они существуют, чтобы выходить с русского адреса; relay уведёт их в Hetzner, и профили потеряют смысл.
 
-**`RUVDS_IP=194.87.80.237`** — адрес, у которого входящий TCP заблокирован. Все скрипты, читающие params, будут ходить в таймаут.
+**`RUVDS_IP=<RUVDS_IP>`** — адрес, у которого входящий TCP заблокирован. Все скрипты, читающие params, будут ходить в таймаут.
 
 **Files:**
 - Modify: `deploy/backhaul/params.env.example`
@@ -291,15 +291,15 @@ done
 
 ```bash
 scp -i ~/.ssh/russian-vps deploy/ruvds/backhaul/render-config.sh \
-    deploy/backhaul/params.env.example root@87.247.157.120:/tmp/
+    deploy/backhaul/params.env.example root@<RUVDS2_IP>:/tmp/
 
 # (а) порт с русским выходом
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 'set -e
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> 'set -e
   sed "s|^RELAY_VLESS_PORTS=.*|RELAY_VLESS_PORTS=\"2053 2059\"|" /tmp/params.env.example > /tmp/bad-ru.env
   bash /tmp/render-config.sh /tmp/bad-ru.env 2>&1 | head -3 || true'
 
 # (б) порт, занятый nginx
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 'set -e
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> 'set -e
   sed "s|^RELAY_VLESS_PORTS=.*|RELAY_VLESS_PORTS=\"443 2053\"|" /tmp/params.env.example > /tmp/bad-443.env
   bash /tmp/render-config.sh /tmp/bad-443.env 2>&1 | head -3 || true'
 ```
@@ -308,13 +308,13 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 'set -e
 
 - [ ] **Step 3: Исправить params.env.example**
 
-Заменить `RUVDS_IP=194.87.80.237` на:
+Заменить `RUVDS_IP=<RUVDS_IP>` на:
 
 ```bash
-# Рабочий адрес. У машины три адреса на eth0; на 194.87.80.237 входящий TCP
+# Рабочий адрес. У машины три адреса на eth0; на <RUVDS_IP> входящий TCP
 # заблокирован вне хоста (замер 23.08.2026: :22 и :443 в таймаут, при этом
 # UDP на тот же адрес доходит). Административный доступ — только сюда.
-RUVDS_IP=87.247.157.120
+RUVDS_IP=<RUVDS2_IP>
 ```
 
 Заменить блок `RELAY_VLESS_PORTS`:
@@ -365,7 +365,7 @@ git commit -m "fix(backhaul): 443 и RU-профили в списке relay л�
 2059/2060/8446 (RU, RU-TCP, RU-STLS) выходят с русского адреса через
 локальный sing-box; relay увёл бы их в Hetzner и обессмыслил.
 
-RUVDS_IP указывал на 194.87.80.237, где входящий TCP заблокирован.
+RUVDS_IP указывал на <RUVDS_IP>, где входящий TCP заблокирован.
 
 Добавлены две запретительные проверки в render-config.sh по образцу
 существующей PROTECTED_DIRECT_PORTS: порты с русским выходом и порты,
@@ -571,7 +571,7 @@ Relay остаётся на своих портах навсегда — «stagi
 не туда. Замерить длительность окна и записать в отчёт:
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'time (nft delete rule ip relay prerouting handle X; nft add rule ip relay prerouting tcp dport 2058 redirect to :32058)'
 ```
 
@@ -644,15 +644,15 @@ cp deploy/backhaul/params.env.example deploy/backhaul/params.env
 
 ```bash
 scp -i ~/.ssh/cloud-hetzner-v2 -r deploy/hetzner/backhaul deploy/backhaul/params.env \
-  root@49.13.201.110:/tmp/
-ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
+  root@<HETZNER_IP>:/tmp/
+ssh -i ~/.ssh/cloud-hetzner-v2 root@<HETZNER_IP> \
   'cd /tmp/backhaul && bash install.sh /tmp/params.env'
 ```
 
 Проверить:
 
 ```bash
-ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
+ssh -i ~/.ssh/cloud-hetzner-v2 root@<HETZNER_IP> \
   'systemctl is-active wg-quick@wg1 backhaul-probe; ip -4 addr show wg1 | grep inet'
 ```
 
@@ -662,15 +662,15 @@ ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
 
 ```bash
 scp -i ~/.ssh/russian-vps -r deploy/ruvds/backhaul deploy/backhaul/params.env \
-  root@87.247.157.120:/tmp/
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+  root@<RUVDS2_IP>:/tmp/
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'cd /tmp/backhaul && bash install.sh /tmp/params.env'
 ```
 
 - [ ] **Step 4: Убедиться, что прод не задет**
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'echo "боевых правил DNAT:"; nft list table ip relay | grep -cE "dnat|redirect"; \
    echo "смещённые порты relay:"; ss -tln | grep -cE ":3205[3-8]"'
 ```
@@ -683,7 +683,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 - [ ] **Step 5: Прогнать сквозную проверку**
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   '/usr/local/bin/backhaul-monitor -config /etc/vpnbot/backhaul.json -probe'
 ```
 
@@ -709,7 +709,7 @@ git commit -m "chore(backhaul): relay развёрнут на смещённых
 - [ ] **Step 1: Прогнать учебный откат на боевой машине**
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 '/tmp/rollback-drill.sh'
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> '/tmp/rollback-drill.sh'
 ```
 
 Все строки `ОК` (их шесть — по числу вызовов `ok()` в скрипте), код возврата 0.
@@ -723,7 +723,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 '/tmp/rollback-drill.sh'
 - [ ] **Step 2: Снять эталонный отпечаток боевых правил**
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'nft list table ip relay | grep -E "dnat|redirect" | sort > /root/relay-before.txt; \
    wc -l < /root/relay-before.txt'
 ```
@@ -733,7 +733,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 - [ ] **Step 3: Перевести один порт**
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'cd /tmp/backhaul && CONFIRM_SEC=300 bash promote.sh --only 2058'
 ```
 
@@ -754,7 +754,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 Профиль DE-WL (2058) без изменений в клиенте. Подключиться, открыть сайт. Параллельно:
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'journalctl -u sing-box-relay --no-pager -n 20; \
    ss -tn state established "( dport = :2058 or sport = :2058 )" | head'
 ```
@@ -764,8 +764,8 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 Даже если всё работает — **первый прогон откатить вручную**, чтобы убедиться в обратимости:
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 'cd /tmp/backhaul && bash promote.sh --rollback'
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> 'cd /tmp/backhaul && bash promote.sh --rollback'
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'nft list table ip relay | grep -E "dnat|redirect" | sort > /root/relay-after.txt; \
    diff /root/relay-before.txt /root/relay-after.txt && echo "ПРАВИЛА СОВПАЛИ"'
 ```
@@ -775,10 +775,10 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 - [ ] **Step 6: Перевести 2058 повторно и подтвердить**
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'cd /tmp/backhaul && CONFIRM_SEC=300 bash promote.sh --only 2058'
 # проверить клиентом, затем:
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 'cd /tmp/backhaul && bash promote.sh --confirm'
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> 'cd /tmp/backhaul && bash promote.sh --confirm'
 ```
 
 - [ ] **Step 7: Наблюдать сутки, затем перевести остальные**
@@ -824,7 +824,7 @@ ANYTLS_PORT=8768
 ANYTLS_PASSWORD=""
 # AnyTLS поднимается поверх Reality, а НЕ поверх своего сертификата.
 # Причина: на Hetzner нет приватного ключа ни для одного нашего имени —
-# /etc/letsencrypt отсутствует, у Caddy сертификат только на myvpn-api.online,
+# /etc/letsencrypt отсутствует, у Caddy сертификат только на <API_DOMAIN>,
 # а cdn.moskva.live лежит там лишь слепком tlsfront для эмуляции telemt.
 # Reality сертификата не требует: он заимствует чужой у cover-домена.
 ANYTLS_SNI="rbc.ru"
@@ -912,15 +912,15 @@ sing-box check -c /etc/sing-box-relay/anytls.json
 - [ ] **Step 4: Проверить конфиги обеими сторонами**
 
 ```bash
-ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 'sing-box check -c /etc/sing-box-bh/anytls.json && echo HZ-OK'
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 '/usr/local/bin/sing-box check -c /etc/sing-box-relay/anytls.json && echo RU-OK'
+ssh -i ~/.ssh/cloud-hetzner-v2 root@<HETZNER_IP> 'sing-box check -c /etc/sing-box-bh/anytls.json && echo HZ-OK'
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> '/usr/local/bin/sing-box check -c /etc/sing-box-relay/anytls.json && echo RU-OK'
 ```
 
 - [ ] **Step 5: Включить ярус и убедиться, что монитор его видит**
 
 ```bash
 # в params.env: PRIMARY_ENABLED=true
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'cd /tmp/backhaul && bash render-config.sh /tmp/params.env && \
    systemctl restart sing-box-bh-anytls sing-box-relay backhaul-monitor && \
    /usr/local/bin/backhaul-monitor -config /etc/vpnbot/backhaul.json -probe'
@@ -931,7 +931,7 @@ ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
 - [ ] **Step 6: Сравнить с emergency**
 
 ```bash
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 'scripts/backhaul/switch.sh status'
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> 'scripts/backhaul/switch.sh status'
 ```
 
 Записать скорости обоих ярусов. Дальше решает монитор.
@@ -945,7 +945,7 @@ git commit -m "feat(backhaul): ярус AnyTLS в слоте primary
 Слот primary резервировался под израильский резидентный узел через frp.
 Узла нет, и Hysteria Realms его не заменяет: проблемы CGNAT в этой схеме
 не было — frpc звонил наружу сам, а настоящим блокером был отказ
-194.87.80.237 принимать входящий TCP (свойство адреса, не NAT).
+<RUVDS_IP> принимать входящий TCP (свойство адреса, не NAT).
 
 Слот занят AnyTLS: собственный фрейминг, padding и mux поверх TLS 1.3,
 utls chrome. Константы ярусов НЕ переименованы намеренно — Rank задаёт
@@ -1075,31 +1075,31 @@ sing-box check -c /etc/sing-box-relay/hy2.json
 Правило `hysteria2` требует UDP, а не TCP. Проверить, что порт открыт именно для UDP:
 
 ```bash
-ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
+ssh -i ~/.ssh/cloud-hetzner-v2 root@<HETZNER_IP> \
   "nft list ruleset | grep -E 'udp dport ${HY2_PORT}' || echo 'ПРАВИЛА НЕТ — добавить'"
 ```
 
 - [ ] **Step 5: Проверить проходимость до включения яруса**
 
 ```bash
-ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
+ssh -i ~/.ssh/cloud-hetzner-v2 root@<HETZNER_IP> \
   "timeout 25 tcpdump -ni any udp port ${HY2_PORT} -w /tmp/hy2.pcap" &
 CAP=$!
 sleep 5
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
-  "for i in \$(seq 1 15); do echo probe > /dev/udp/49.13.201.110/${HY2_PORT}; done"
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
+  "for i in \$(seq 1 15); do echo probe > /dev/udp/<HETZNER_IP>/${HY2_PORT}; done"
 wait $CAP
-ssh -i ~/.ssh/cloud-hetzner-v2 root@49.13.201.110 \
+ssh -i ~/.ssh/cloud-hetzner-v2 root@<HETZNER_IP> \
   'tcpdump -nr /tmp/hy2.pcap | wc -l; rm -f /tmp/hy2.pcap'
 ```
 
-Ожидается 15. Важно: считать **все** пакеты, не фильтруя по источнику — RuVDS отправляет с адреса `194.87.80.237`, а не с того, на который к нему обращаются. И держать SSH-сессию tcpdump открытой: фоновый запуск через `nohup` в закрывающейся сессии умирает и даёт ложный ноль.
+Ожидается 15. Важно: считать **все** пакеты, не фильтруя по источнику — RuVDS отправляет с адреса `<RUVDS_IP>`, а не с того, на который к нему обращаются. И держать SSH-сессию tcpdump открытой: фоновый запуск через `nohup` в закрывающейся сессии умирает и даёт ложный ноль.
 
 - [ ] **Step 6: Включить ярус и замерить**
 
 ```bash
 # в params.env: SECONDARY_ENABLED=true
-ssh -i ~/.ssh/russian-vps root@87.247.157.120 \
+ssh -i ~/.ssh/russian-vps root@<RUVDS2_IP> \
   'cd /tmp/backhaul && bash render-config.sh /tmp/params.env && \
    systemctl restart sing-box-bh-hy2 sing-box-relay backhaul-monitor && \
    scripts/backhaul/switch.sh status'

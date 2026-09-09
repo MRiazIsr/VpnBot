@@ -97,9 +97,6 @@ func GetHetznerServerIP() string {
 	if ip == "" {
 		ip = os.Getenv("SERVER_IP")
 	}
-	if ip == "" {
-		ip = "49.13.201.110"
-	}
 	return ip
 }
 
