@@ -218,7 +218,7 @@ type InboundConfig struct {
 
 	Tag           string `gorm:"uniqueIndex;not null" json:"tag"`
 	DisplayName   string `json:"display_name"`
-	Protocol      string `json:"protocol"` // "vless" | "hysteria2"
+	Protocol      string `json:"protocol"` // "vless" | "hysteria2" | "shadowtls" | "mask"
 	ListenPort    int    `json:"listen_port"`
 	TLSType       string `json:"tls_type"` // "reality" | "certificate"
 	SNI           string `json:"sni"`
@@ -253,6 +253,13 @@ type InboundConfig struct {
 	CoverDomain       string `json:"cover_domain"`
 	InnerMethod       string `json:"inner_method"`
 	InnerPassword     string `json:"inner_password"`
+
+	// Finalmask-обёртка (Protocol="mask"): Xray на RuVDS снимает маску и
+	// форвардит голый поток в VLESS-инбаунд sing-box с тегом MaskInnerTag
+	// на 127.0.0.1:<его ListenPort>. MaskJSON — блок streamSettings.finalmask
+	// Xray как есть; он же уходит в ссылку параметром fm.
+	MaskInnerTag string `json:"mask_inner_tag"`
+	MaskJSON     string `gorm:"type:text" json:"mask_json"`
 }
 
 // --- Init ---
@@ -448,6 +455,25 @@ func Init(path string) {
 			InnerPassword:     "REPLACE_ME_BASE64_16B",
 		}
 		DB.Create(&shadowtlsSeed)
+	}
+
+	// Mask-инбаунд (Xray finalmask sudoku перед vless-direct-tcp). Создаётся и
+	// на уже существующей БД, но выключен: password маски задаётся через API.
+	var maskCount int64
+	DB.Model(&InboundConfig{}).Where("tag = ?", "RU-MASK").Count(&maskCount)
+	if maskCount == 0 {
+		DB.Create(&InboundConfig{
+			Tag:          "RU-MASK",
+			DisplayName:  "RU-MASK",
+			Protocol:     "mask",
+			ListenPort:   2071,
+			Enabled:      false,
+			IsBuiltin:    false,
+			SortOrder:    13,
+			MaskInnerTag: "vless-direct-tcp",
+			MaskJSON: `{"tcp":[{"type":"sudoku","settings":{"password":"REPLACE_ME_VIA_API",` +
+				`"ascii":"prefer_entropy","paddingMin":2,"paddingMax":7}}]}`,
+		})
 	}
 
 	var hc HealthConfig
