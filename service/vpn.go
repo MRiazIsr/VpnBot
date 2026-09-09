@@ -512,6 +512,8 @@ func GenerateRuVDSConfig() ([]byte, error) {
 }
 
 // GenerateAndReloadRuVDS — перегенерация + деплой config.json на RuVDS через SSH.
+// Xray-сайдкар деплоится после sing-box; его ошибка не откатывает sing-box,
+// а возвращается отдельным сообщением.
 func GenerateAndReloadRuVDS() error {
 	if !IsRuVDSEnabled() {
 		return nil
@@ -520,7 +522,17 @@ func GenerateAndReloadRuVDS() error {
 	if err != nil {
 		return err
 	}
-	return DeploySingboxConfigRuVDS(cfgJSON)
+	if err := DeploySingboxConfigRuVDS(cfgJSON); err != nil {
+		return err
+	}
+	xrayJSON, err := GenerateXrayRuVDSConfig()
+	if err != nil {
+		return fmt.Errorf("xray RuVDS: %w", err)
+	}
+	if err := DeployXrayConfigRuVDS(xrayJSON); err != nil {
+		return fmt.Errorf("xray RuVDS: %w", err)
+	}
+	return nil
 }
 
 // GenerateLinkForInbound generates a subscription link for a given inbound config
