@@ -189,6 +189,10 @@ func buildUserNames(users []database.User) []string {
 // Для vless/hysteria2 — 1 элемент (типизированный SingboxInbound).
 // Для shadowtls — 2 элемента (shadowtls + inner shadowsocks).
 func buildInboundGroup(ib database.InboundConfig, users []database.User) []any {
+	// mask обслуживает Xray (service/xray.go), sing-box о нём не знает.
+	if ib.Protocol == "mask" {
+		return []any{}
+	}
 	if ib.Protocol == "shadowtls" {
 		return buildShadowTLSGroup(ib, users)
 	}
@@ -336,6 +340,9 @@ func buildSingBoxConfig(inbounds []database.InboundConfig, users []database.User
 	inboundTags := []string{}
 	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
+		if ib.Protocol == "mask" {
+			continue
+		}
 		group := buildInboundGroup(ib, users)
 		singboxInbounds = append(singboxInbounds, group...)
 		inboundTags = append(inboundTags, ib.Tag)
@@ -457,6 +464,9 @@ func GenerateRuVDSConfig() ([]byte, error) {
 	singboxInbounds := []any{}
 	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
+		if ib.Protocol == "mask" {
+			continue
+		}
 		group := buildInboundGroup(ib, users)
 		singboxInbounds = append(singboxInbounds, group...)
 		if ib.ExitOutbound != "" {

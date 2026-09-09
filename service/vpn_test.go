@@ -362,3 +362,28 @@ func TestGenerateLinkForInbound_DefaultFingerprintIsChrome(t *testing.T) {
 		t.Fatalf("expected fp=chrome for unset fingerprint, got %s", link)
 	}
 }
+
+func TestBuildInboundGroup_MaskReturnsNothing(t *testing.T) {
+	ib := database.InboundConfig{Tag: "RU-MASK", Protocol: "mask", ListenPort: 2071, MaskInnerTag: "vless-direct-tcp"}
+	group := buildInboundGroup(ib, nil)
+	if len(group) != 0 {
+		t.Fatalf("mask inbound must not produce sing-box inbounds, got %d", len(group))
+	}
+}
+
+func TestBuildSingBoxConfig_MaskNotEmitted(t *testing.T) {
+	inner := database.InboundConfig{Tag: "vless-direct-tcp", Protocol: "vless", ListenPort: 2060, TLSType: "reality", ExitOutbound: "direct"}
+	mask := database.InboundConfig{Tag: "RU-MASK", Protocol: "mask", ListenPort: 2071, MaskInnerTag: "vless-direct-tcp", ExitOutbound: "direct"}
+	cfg := buildSingBoxConfig([]database.InboundConfig{inner, mask}, nil, nil, "")
+	b, _ := json.Marshal(cfg)
+	got := string(b)
+	if strings.Contains(got, `"RU-MASK"`) {
+		t.Fatalf("mask inbound leaked into sing-box config: %s", got)
+	}
+	if strings.Contains(got, `"listen_port":2071`) {
+		t.Fatalf("mask port leaked into sing-box config: %s", got)
+	}
+	if !strings.Contains(got, `"listen_port":2060`) {
+		t.Fatalf("inner inbound must stay, got: %s", got)
+	}
+}
