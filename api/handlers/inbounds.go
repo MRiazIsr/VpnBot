@@ -1,6 +1,10 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"vpnbot/database"
@@ -8,6 +12,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// ruvdsRedirectedPorts — порты, которые nftables PREROUTING на RuVDS уже
+// перенаправляет другим сервисам (backhaul relay, telemt, VK TURN и т.д.) —
+// см. "Global Constraints" в docs/superpowers/plans/2026-09-09-xray-mask-ruvds.md.
+// Порт mask-инбаунда не должен совпадать ни с одним из них.
+var ruvdsRedirectedPorts = map[int]bool{
+	2053: true, 2054: true, 2055: true, 2056: true, 2057: true, 2058: true,
+	4443: true, 8444: true, 8447: true, 9443: true,
+}
 
 func trimInboundStrings(input *database.InboundConfig) {
 	input.Tag = strings.TrimSpace(input.Tag)
@@ -25,6 +38,8 @@ func trimInboundStrings(input *database.InboundConfig) {
 	input.RealityPrivateKey = strings.TrimSpace(input.RealityPrivateKey)
 	input.RealityPublicKey = strings.TrimSpace(input.RealityPublicKey)
 	input.Fingerprint = strings.TrimSpace(input.Fingerprint)
+	input.MaskInnerTag = strings.TrimSpace(input.MaskInnerTag)
+	input.MaskJSON = strings.TrimSpace(input.MaskJSON)
 }
 
 // validateInboundCombination проверяет совместимость полей инбаунда.
@@ -72,6 +87,9 @@ func validateMaskInbound(input *database.InboundConfig) string {
 	if input.ListenPort == 0 {
 		return "listen_port is required for mask"
 	}
+	if ruvdsRedirectedPorts[input.ListenPort] {
+		return "listen_port is redirected by RuVDS nftables PREROUTING; choose another port"
+	}
 	if input.MaskInnerTag == "" {
 		return "mask_inner_tag is required for mask"
 	}
@@ -91,6 +109,29 @@ func validateMaskInbound(input *database.InboundConfig) string {
 	// Exit решает внутренний инбаунд; у маски своего маршрута нет.
 	input.ExitOutbound = ""
 	return ""
+}
+
+// enabledMasksPointingAt — enabled mask-инбаунды, чей mask_inner_tag
+// указывает на tag. excludeID (0 — не исключать) — сам инбаунд, если это
+// маска и мы проверяем её же обновление.
+func enabledMasksPointingAt(tag string, excludeID uint) []database.InboundConfig {
+	var masks []database.InboundConfig
+	q := database.DB.Where("protocol = ? AND enabled = ? AND mask_inner_tag = ?", "mask", true, tag)
+	if excludeID != 0 {
+		q = q.Where("id != ?", excludeID)
+	}
+	q.Find(&masks)
+	return masks
+}
+
+// maskDependencyError — текст 400-ошибки, когда операция сломала бы работающую
+// маску (удаление/выключение/переименование inner-инбаунда, на который она указывает).
+func maskDependencyError(masks []database.InboundConfig) string {
+	tags := make([]string, 0, len(masks))
+	for _, m := range masks {
+		tags = append(tags, m.Tag)
+	}
+	return fmt.Sprintf("inbound is used by enabled mask inbound(s): %s", strings.Join(tags, ", "))
 }
 
 func GetSNIPresets() gin.HandlerFunc {
@@ -329,10 +370,27 @@ func UpdateInbound() gin.HandlerFunc {
 			return
 		}
 
+		// Читаем сырое тело отдельно от ShouldBindJSON: bool Enabled=false
+		// неотличим от "поле не передано" после декодирования в структуру
+		// (нулевое значение), а нам нужно различать это ниже.
+		bodyBytes, _ := io.ReadAll(c.Request.Body)
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
 		var input database.InboundConfig
 		if err := c.ShouldBindJSON(&input); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
+		}
+
+		explicitDisable := false
+		var rawFields map[string]json.RawMessage
+		if json.Unmarshal(bodyBytes, &rawFields) == nil {
+			if v, ok := rawFields["enabled"]; ok {
+				var enabled bool
+				if json.Unmarshal(v, &enabled) == nil && !enabled {
+					explicitDisable = true
+				}
+			}
 		}
 
 		trimInboundStrings(&input)
@@ -346,6 +404,23 @@ func UpdateInbound() gin.HandlerFunc {
 		if effectiveProtocol == "" {
 			effectiveProtocol = existing.Protocol
 		}
+
+		if effectiveProtocol != "mask" {
+			// Меняем сам inner-инбаунд маски (не маску) — если её тег, протокол,
+			// транспорт меняются или её явно выключают, а на него ссылается
+			// работающая маска, эта маска осталась бы форвардить в никуда (I1).
+			if deps := enabledMasksPointingAt(existing.Tag, 0); len(deps) > 0 {
+				breaking := (input.Tag != "" && input.Tag != existing.Tag) ||
+					(input.Protocol != "" && input.Protocol != existing.Protocol) ||
+					(input.Transport != "" && input.Transport != existing.Transport) ||
+					explicitDisable
+				if breaking {
+					c.JSON(http.StatusBadRequest, gin.H{"error": maskDependencyError(deps)})
+					return
+				}
+			}
+		}
+
 		switch effectiveProtocol {
 		case "mask":
 			// Для частичного апдейта берём недостающие поля из existing.
@@ -428,6 +503,11 @@ func DeleteInbound() gin.HandlerFunc {
 			return
 		}
 
+		if deps := enabledMasksPointingAt(existing.Tag, 0); len(deps) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": maskDependencyError(deps)})
+			return
+		}
+
 		database.DB.Delete(&existing)
 
 		service.GenerateAndReload()
@@ -446,7 +526,26 @@ func ToggleInbound() gin.HandlerFunc {
 			return
 		}
 
-		existing.Enabled = !existing.Enabled
+		newEnabled := !existing.Enabled
+
+		if existing.Protocol != "mask" && !newEnabled {
+			// Отключаем инбаунд — если на него ссылается работающая маска, она
+			// осталась бы форвардить на мёртвый порт молча (см. I1).
+			if deps := enabledMasksPointingAt(existing.Tag, 0); len(deps) > 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": maskDependencyError(deps)})
+				return
+			}
+		}
+		if existing.Protocol == "mask" && newEnabled {
+			// Включаем маску — прогоняем те же проверки, что и при создании/апдейте,
+			// иначе toggle обходит validateMaskInbound.
+			if msg := validateMaskInbound(&existing); msg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+				return
+			}
+		}
+
+		existing.Enabled = newEnabled
 		database.DB.Model(&existing).Update("enabled", existing.Enabled)
 
 		service.GenerateAndReload()
