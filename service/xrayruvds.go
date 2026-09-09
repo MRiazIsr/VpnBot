@@ -108,10 +108,26 @@ func GenerateXrayRuVDSConfig() ([]byte, error) {
 	return buildXrayConfig(inbounds)
 }
 
+// HasMaskInbounds — есть ли в БД хотя бы одна запись Protocol="mask", в любом
+// состоянии Enabled. Используется чтобы не ходить по SSH на RuVDS ради Xray
+// на каждый reload, если mask-инбаундов в системе вообще не заведено.
+func HasMaskInbounds() bool {
+	var count int64
+	database.DB.Model(&database.InboundConfig{}).Where("protocol = ?", "mask").Count(&count)
+	return count > 0
+}
+
 // DeployXrayConfigRuVDS — пишет config.json и рестартует сервис.
 // cfgJSON == nil означает «масок нет»: сервис останавливается, конфиг не
-// трогаем. Если сервис не установлен (setup не делали), а маски есть —
-// restart упадёт, и это ожидаемая ошибка: нужен POST /api/xray/ruvds/setup.
+// трогаем.
+//
+// Конфиг сначала пишется во временный config.json.new и проверяется
+// `xray run -test`; только если он реально отличается от текущего
+// config.json, файл подменяется. Restart дёргается ТОЛЬКО когда конфиг
+// изменился И сервис уже active — иначе деплой на каждый reload перезапускал
+// бы Xray без причины (рвал активные TCP-сессии клиентов) и, что хуже,
+// поднимал бы Xray обратно после явного `systemctl stop` (Setup/Start —
+// единственные места, где запуск сервиса — осознанное действие).
 func DeployXrayConfigRuVDS(cfgJSON []byte) error {
 	client, err := sshConnect()
 	if err != nil {
@@ -124,17 +140,42 @@ func DeployXrayConfigRuVDS(cfgJSON []byte) error {
 		return nil
 	}
 
+	if out, _ := runSSH(client, fmt.Sprintf("test -x %s && echo ok", XrayRuVDSBinaryPath)); strings.TrimSpace(out) != "ok" {
+		return fmt.Errorf("Xray не установлен на RuVDS: выполните POST /api/xray/ruvds/setup")
+	}
+
+	newPath := XrayRuVDSConfigPath + ".new"
 	cmd := fmt.Sprintf("mkdir -p %s && cat > %s << 'CFGEOF'\n%s\nCFGEOF",
-		XrayRuVDSConfigDir, XrayRuVDSConfigPath, string(cfgJSON))
+		XrayRuVDSConfigDir, newPath, string(cfgJSON))
 	if out, err := runSSH(client, cmd); err != nil {
-		return fmt.Errorf("запись config.json: %w: %s", err, out)
+		return fmt.Errorf("запись config.json.new: %w: %s", err, out)
 	}
-	if out, err := runSSH(client, fmt.Sprintf("%s run -test -c %s 2>&1 | tail -1",
-		XrayRuVDSBinaryPath, XrayRuVDSConfigPath)); err != nil || !strings.Contains(out, "Configuration OK") {
-		return fmt.Errorf("xray -test отверг конфиг: %s", strings.TrimSpace(out))
+
+	testOut, testErr := runSSH(client, fmt.Sprintf("%s run -test -c %s 2>&1 | tail -1",
+		XrayRuVDSBinaryPath, newPath))
+	if testErr != nil || !strings.Contains(testOut, "Configuration OK") {
+		runSSH(client, fmt.Sprintf("rm -f %s", newPath))
+		return fmt.Errorf("xray -test отверг конфиг: %s", strings.TrimSpace(testOut))
 	}
-	if out, err := runSSH(client, fmt.Sprintf("systemctl restart %s", XrayRuVDSServiceName)); err != nil {
-		return fmt.Errorf("restart xray: %w: %s", err, out)
+
+	// Меняем местами только если конфиг реально другой; иначе просто убираем .new.
+	swapCmd := fmt.Sprintf(
+		"if cmp -s %s %s; then rm -f %s; echo unchanged; else mv -f %s %s; echo changed; fi",
+		newPath, XrayRuVDSConfigPath, newPath, newPath, XrayRuVDSConfigPath)
+	swapOut, err := runSSH(client, swapCmd)
+	if err != nil {
+		return fmt.Errorf("замена config.json: %w: %s", err, swapOut)
+	}
+	if strings.TrimSpace(swapOut) != "changed" {
+		return nil
+	}
+
+	activeOut, _ := runSSH(client, fmt.Sprintf("systemctl is-active --quiet %s && echo active",
+		XrayRuVDSServiceName))
+	if strings.TrimSpace(activeOut) == "active" {
+		if out, err := runSSH(client, fmt.Sprintf("systemctl restart %s", XrayRuVDSServiceName)); err != nil {
+			return fmt.Errorf("restart xray: %w: %s", err, out)
+		}
 	}
 	return nil
 }

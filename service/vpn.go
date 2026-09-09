@@ -515,6 +515,11 @@ func GenerateRuVDSConfig() ([]byte, error) {
 // GenerateAndReloadRuVDS — перегенерация + деплой config.json на RuVDS через SSH.
 // Xray-сайдкар деплоится после sing-box; его ошибка не откатывает sing-box,
 // а возвращается отдельным сообщением.
+//
+// Xray-шаг целиком пропускается, если в БД вообще нет ни одной записи
+// Protocol="mask" (HasMaskInbounds) — иначе каждый reload инбаундов без
+// масок всё равно ходил бы по SSH на RuVDS и мог бы остановить Xray, которого
+// там даже не должно быть.
 func GenerateAndReloadRuVDS() error {
 	if !IsRuVDSEnabled() {
 		return nil
@@ -526,8 +531,16 @@ func GenerateAndReloadRuVDS() error {
 	if err := DeploySingboxConfigRuVDS(cfgJSON); err != nil {
 		return err
 	}
+	if !HasMaskInbounds() {
+		return nil
+	}
 	xrayJSON, err := GenerateXrayRuVDSConfig()
 	if err != nil {
+		// Конфиг Xray собрать не удалось (например, inner-инбаунд маски выключен,
+		// удалён или сменил протокол/транспорт) — останавливаем Xray явно, чтобы
+		// он не продолжал форвардить публичный порт на мёртвый 127.0.0.1-листенер.
+		// Fail closed: лучше маска недоступна, чем маска тихо ведёт в никуда.
+		DeployXrayConfigRuVDS(nil)
 		return fmt.Errorf("xray RuVDS: %w", err)
 	}
 	if err := DeployXrayConfigRuVDS(xrayJSON); err != nil {
@@ -655,13 +668,14 @@ func generateShadowTLSLink(ib database.InboundConfig, _ database.User, serverAdd
 }
 
 // lookupInboundByTag — внутренний инбаунд маски из БД. false — если БД не
-// инициализирована (юнит-тесты) или тег не найден.
+// инициализирована (юнит-тесты), тег не найден, или найденный инбаунд
+// выключен (тогда маска, указывающая на него, тоже недоступна).
 func lookupInboundByTag(tag string) (database.InboundConfig, bool) {
 	if database.DB == nil || tag == "" {
 		return database.InboundConfig{}, false
 	}
 	var ib database.InboundConfig
-	if err := database.DB.Where("tag = ?", tag).First(&ib).Error; err != nil {
+	if err := database.DB.Where("tag = ? AND enabled = ?", tag, true).First(&ib).Error; err != nil {
 		return database.InboundConfig{}, false
 	}
 	return ib, true
