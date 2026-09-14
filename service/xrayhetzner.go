@@ -319,8 +319,10 @@ func SetupXrayXDNS() error {
 	if cfgJSON == nil {
 		return fmt.Errorf("нет enabled xdns-инбаундов")
 	}
-	if owner := Port53Owner(); owner != "" && !strings.Contains(owner, XrayXDNSServiceName) {
-		return fmt.Errorf("порт 53 занят другим процессом (%s): освободите его (остановите slipstream, снимите REDIRECT 53→5300) и повторите", strings.TrimSpace(owner))
+	if !IsXrayXDNSRunning() {
+		if owner := Port53Owner(); strings.TrimSpace(owner) != "" {
+			return fmt.Errorf("порт 53 занят другим процессом (%s): освободите его (остановите slipstream, снимите REDIRECT 53→5300) и повторите", strings.TrimSpace(owner))
+		}
 	}
 	if err := DeployXDNSConfig(cfgJSON); err != nil {
 		return err
