@@ -252,6 +252,12 @@ func Start(token string, adminID int64) {
 		if err != nil {
 			return c.Send(err.Error())
 		}
+		// xdns раздаётся не ссылкой, а полным JSON-конфигом Xray: Happ его
+		// импортирует целиком, а vless-ссылку с пост-квантовым шифрованием +
+		// finalmask отвергает как невалидную.
+		if ib.Protocol == "xdns" {
+			return sendXDNSConfig(c, ib, user)
+		}
 		addr := linkServerAddr(ib)
 		if addr == "" {
 			return c.Send(maskUnavailableMsg)
@@ -260,11 +266,8 @@ func Start(token string, adminID int64) {
 		if link == "" {
 			return c.Send(emptyLinkMsg(ib))
 		}
-		if ib.Protocol == "mask" || ib.Protocol == "xdns" {
+		if ib.Protocol == "mask" {
 			warning := "⚠️ Основное приложение — **Happ**. Также подойдут v2rayNG, v2rayN, Streisand. Hiddify и Shadowrocket эту ссылку не поймут."
-			if ib.Protocol == "xdns" {
-				warning += "\n⚠️ После импорта задайте в настройках mKCP параметр MTU = 130, иначе соединение не поедет."
-			}
 			return c.Send(fmt.Sprintf("`%s`\n\n%s", link, warning), tele.ModeMarkdown)
 		}
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
@@ -274,6 +277,10 @@ func Start(token string, adminID int64) {
 		ib, user, err := getInboundAndUser(c)
 		if err != nil {
 			return c.Send(err.Error())
+		}
+		// Для xdns QR не годится (конфиг слишком большой) — шлём JSON-файл.
+		if ib.Protocol == "xdns" {
+			return sendXDNSConfig(c, ib, user)
 		}
 		addr := linkServerAddr(ib)
 		if addr == "" {
@@ -728,6 +735,24 @@ func qrCaption(ib database.InboundConfig) string {
 		return fmt.Sprintf("%s — откройте в Happ (или v2rayNG / Streisand; Hiddify не подойдёт)", ib.DisplayName)
 	}
 	return fmt.Sprintf("%s — сканируйте в Hiddify", ib.DisplayName)
+}
+
+// sendXDNSConfig отправляет xdns-инбаунд полным JSON-конфигом Xray файлом.
+// Happ импортирует его целиком (добавить конфиг из файла), а vless-ссылку с
+// пост-квантовым шифрованием + finalmask он отвергает как невалидную. MTU 130
+// и резолверы уже внутри конфига — вручную ничего вводить не нужно.
+func sendXDNSConfig(c tele.Context, ib database.InboundConfig, user database.User) error {
+	cfg := service.GenerateXDNSClientConfig(ib, user)
+	if cfg == "" {
+		return c.Send(emptyLinkMsg(ib))
+	}
+	doc := &tele.Document{
+		File:     tele.FromReader(strings.NewReader(cfg)),
+		FileName: fmt.Sprintf("xdns-%s.json", user.Username),
+		Caption: "XDNS — импортируйте этот файл в Happ как конфиг (добавить из файла/буфера), " +
+			"не как ссылку-подписку. MTU и резолверы уже внутри. Нужно ядро Xray ≥ 26.",
+	}
+	return c.Send(doc)
 }
 
 func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {

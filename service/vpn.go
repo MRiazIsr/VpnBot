@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 	"vpnbot/database"
@@ -586,7 +587,11 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 	}
 
 	if ib.Protocol == "xdns" {
-		return GenerateXDNSLink(ib, user)
+		// xdns раздаётся не share-ссылкой, а полным JSON-конфигом Xray
+		// (см. GenerateXDNSClientConfig): vless-ссылка не тянет
+		// пост-квантовое шифрование + finalmask + client MTU, Happ её
+		// отвергает. Бот шлёт JSON документом.
+		return ""
 	}
 
 	if ib.Protocol == "shadowtls" {
@@ -753,28 +758,62 @@ func firstResolverHost(resolvers string) string {
 // GenerateXDNSLink — ссылка XDNS для Xray-клиентов (Happ). Адрес назначения —
 // первый резолвер, а не Hetzner: рекурсия резолвера доходит до нашего
 // authoritative и «отмывает» L3. Понимают только Xray-клиенты.
-func GenerateXDNSLink(ib database.InboundConfig, user database.User) string {
+// GenerateXDNSClientConfig — полный клиентский Xray JSON для xdns. Happ (и
+// v2rayN/v2rayNG) импортируют его целиком; vless share-ссылка не тянет
+// пост-квантовое VLESS-шифрование + finalmask + client-side mKCP MTU, и Happ
+// её отвергает как невалидную. socks на 127.0.0.1:10808, outbound на первый
+// резолвер из XDNSResolvers, kcpSettings.mtu = XDNSClientMTU (спайком доказано,
+// что 130 обязателен), finalmask xdns со всеми резолверами. "" если нет
+// резолверов, ключа или UUID (setup ещё не делали).
+func GenerateXDNSClientConfig(ib database.InboundConfig, user database.User) string {
 	host := firstResolverHost(ib.XDNSResolvers)
-	if host == "" || ib.XDNSEncryption == "" {
+	if host == "" || ib.XDNSEncryption == "" || user.UUID == "" {
 		return ""
 	}
-	q := url.Values{}
-	q.Set("type", "kcp")
-	// seed — это AES-128-GCM ключ обфускации mKCP (kcpSettings.seed), а не MTU.
-	// Сервер обфускацию не включает; ссылка с seed заставит клиента
-	// обфусцировать датаграммы, которые сервер молча дропнет (0 B/s).
-	// Share-link формат Xray не умеет передавать client-side MTU — его
-	// приходится выставлять в клиенте вручную (см. docs/xdns-runbook.md).
-	q.Set("encryption", ib.XDNSEncryption)
-	q.Set("fm", xdnsClientFinalmask(ib.XDNSResolvers))
-	u := url.URL{
-		Scheme:   "vless",
-		User:     url.User(user.UUID),
-		Host:     host,
-		RawQuery: q.Encode(),
-		Fragment: "XDNS-" + user.Username,
+	cfg := map[string]any{
+		"log": map[string]any{"loglevel": "warning"},
+		"inbounds": []any{map[string]any{
+			"tag": "socks-in", "listen": "127.0.0.1", "port": 10808,
+			"protocol": "socks",
+			"settings": map[string]any{"udp": true},
+			"sniffing": map[string]any{"enabled": true, "destOverride": []string{"http", "tls"}},
+		}},
+		"outbounds": []any{map[string]any{
+			"tag": "xdns-out", "protocol": "vless",
+			"settings": map[string]any{"vnext": []any{map[string]any{
+				"address": hostOnly(host), "port": portOnly(host),
+				"users": []any{map[string]any{"id": user.UUID, "encryption": ib.XDNSEncryption}},
+			}}},
+			"streamSettings": map[string]any{
+				"network":     "kcp",
+				"kcpSettings": map[string]any{"mtu": XDNSClientMTU},
+				"finalmask":   json.RawMessage(xdnsClientFinalmask(ib.XDNSResolvers)),
+			},
+		}},
 	}
-	return u.String()
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// hostOnly / portOnly разбивают "ip:port" из резолвера. При сбое — исходная
+// строка и порт 53 (дефолт DNS).
+func hostOnly(hp string) string {
+	if i := strings.LastIndex(hp, ":"); i >= 0 {
+		return hp[:i]
+	}
+	return hp
+}
+
+func portOnly(hp string) int {
+	if i := strings.LastIndex(hp, ":"); i >= 0 {
+		if p, err := strconv.Atoi(hp[i+1:]); err == nil {
+			return p
+		}
+	}
+	return 53
 }
 
 func ReloadService() error {

@@ -102,30 +102,46 @@ func TestXDNSClientFinalmask(t *testing.T) {
 	}
 }
 
-func TestGenerateXDNSLink(t *testing.T) {
+func TestGenerateXDNSClientConfig(t *testing.T) {
 	ib := xdnsFixture()
 	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
-	link := GenerateXDNSLink(ib, user)
-	if !strings.HasPrefix(link, "vless://550e8400-e29b-41d4-a716-446655440000@8.8.8.8:53?") {
-		t.Fatalf("expected first resolver host, got %s", link)
+	cfg := GenerateXDNSClientConfig(ib, user)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(cfg), &m); err != nil {
+		t.Fatalf("config is not valid JSON: %v\n%s", err, cfg)
 	}
-	for _, want := range []string{"type=kcp", "encryption=mlkem768x25519plus", "fm=%7B%22udp%22"} {
-		if !strings.Contains(link, want) {
-			t.Errorf("missing %s in %s", want, link)
+	for _, want := range []string{
+		`"protocol": "socks"`,
+		`"port": 10808`,
+		`"protocol": "vless"`,
+		`"address": "8.8.8.8"`,
+		`"port": 53`,
+		`"id": "550e8400-e29b-41d4-a716-446655440000"`,
+		`"encryption": "mlkem768x25519plus`,
+		`"network": "kcp"`,
+		`"mtu": 130`,
+		`"type": "xdns"`,
+		`t.edgn.net:txt+udp://8.8.8.8:53`,
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("missing %s in:\n%s", want, cfg)
 		}
-	}
-	if strings.Contains(link, "seed=") {
-		t.Errorf("seed must not be in xdns link: %s", link)
-	}
-	if !strings.HasSuffix(link, "#XDNS-alice") {
-		t.Errorf("expected #XDNS-alice fragment, got %s", link)
 	}
 }
 
-func TestGenerateXDNSLink_NoResolvers(t *testing.T) {
+func TestGenerateXDNSClientConfig_Empty(t *testing.T) {
 	ib := xdnsFixture()
 	ib.XDNSResolvers = ""
-	if got := GenerateXDNSLink(ib, database.User{UUID: "u"}); got != "" {
-		t.Fatalf("expected empty link without resolvers, got %q", got)
+	if got := GenerateXDNSClientConfig(ib, database.User{UUID: "u"}); got != "" {
+		t.Fatalf("expected empty config without resolvers, got %q", got)
+	}
+	ib2 := xdnsFixture()
+	if got := GenerateXDNSClientConfig(ib2, database.User{UUID: ""}); got != "" {
+		t.Fatalf("expected empty config without UUID, got %q", got)
+	}
+	ib3 := xdnsFixture()
+	ib3.XDNSEncryption = ""
+	if got := GenerateXDNSClientConfig(ib3, database.User{UUID: "u"}); got != "" {
+		t.Fatalf("expected empty config without encryption, got %q", got)
 	}
 }
