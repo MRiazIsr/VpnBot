@@ -291,10 +291,12 @@ func EnsureXDNSKeys() error {
 		if perr != nil {
 			return fmt.Errorf("xdns %q: %w", ib.Tag, perr)
 		}
-		if err := database.DB.Model(&ib).Updates(map[string]any{
-			"xdns_decryption": dec,
-			"xdns_encryption": enc,
-		}).Error; err != nil {
+		// Пишем через struct, а не map: GORM сам мапит поля на колонки
+		// (x_dns_decryption / x_dns_encryption — подчёркивание внутри
+		// аббревиатуры XDNS), тогда как map с ключом "xdns_decryption"
+		// бил мимо колонки ("no such column").
+		if err := database.DB.Model(&database.InboundConfig{}).Where("id = ?", ib.ID).
+			Updates(database.InboundConfig{XDNSDecryption: dec, XDNSEncryption: enc}).Error; err != nil {
 			return fmt.Errorf("xdns %q: сохранение ключей: %w", ib.Tag, err)
 		}
 		log.Println("Сгенерированы VLESS-ключи для xdns-инбаунда:", ib.Tag)
