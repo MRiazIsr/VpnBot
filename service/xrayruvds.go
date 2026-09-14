@@ -151,7 +151,9 @@ func DeployXrayConfigRuVDS(cfgJSON []byte) error {
 		return fmt.Errorf("запись config.json.new: %w: %s", err, out)
 	}
 
-	testOut, testErr := runSSH(client, fmt.Sprintf("%s run -test -c %s 2>&1 | tail -1",
+	// -format json обязателен: xray определяет формат по расширению файла, а у
+	// временного config.json.new его нет — без флага падает с "Failed to get format".
+	testOut, testErr := runSSH(client, fmt.Sprintf("%s run -test -format json -c %s 2>&1 | tail -1",
 		XrayRuVDSBinaryPath, newPath))
 	if testErr != nil || !strings.Contains(testOut, "Configuration OK") {
 		runSSH(client, fmt.Sprintf("rm -f %s", newPath))
