@@ -193,55 +193,96 @@ slipstream/dnstt через резолвер и без выгорания. Кл�
 заблокированы). 5353/udp открывается/закрывается через
 `POST`/`DELETE /api/network/firewall/rules` самого vpnbot.
 
-### Инфраструктура
+Решения зафиксированы в чате 2026-09-14.
 
-Живая зона уже есть: `t.edgn.net` NS → `ns.edgn.net` → Hetzner. Порт 53 на
-Hetzner занят slipstream через REDIRECT 53 → 5300, и канал используется.
-Перед этапом владелец выбирает: окно, когда slipstream снимается с 53, или
-второй адрес. Резолверы в ссылке: DNS оператора первым, 8.8.8.8 и 1.1.1.1
-в РФ заблокированы и годятся только для проверки извне.
+### Архитектура — второй экземпляр Xray на Hetzner
 
-VLESS без TLS на публичный адрес Xray не поднимает: нужен `xray vlessenc`,
-пара `decryption` (сервер) / `encryption` (клиент, попадает в ссылку как
-`encryption=`). Берётся X25519-вариант, он короткий.
+XDNS-сервер стоит на выходе, у авторитативного DNS, то есть на Hetzner (там же
+vpnbot). Это второй экземпляр Xray, отдельный от RuVDS-сайдкара:
+
+- **RuVDS:** `buildXrayConfig(masks)` → dokodemo-door маски (этап 1, не трогаем).
+- **Hetzner:** новый `buildXrayXDNSConfig(xdnsInbounds, users)` → VLESS+mKCP+xdns,
+  слушает `:53`. Отдельный конфиг, unit `xray-xdns.service`, отдельный билдер.
+  Смешивать с RuVDS-конфигом нельзя — разные хосты.
+
+Xray ставится на Hetzner **локально** (Hetzner до github CDN достаёт, RuVDS нет):
+`service/xrayhetzner.go` по образцу `xrayruvds.go`, но локальные команды вместо
+SSH. Пин версии тот же (`XrayVersion`, sha256), бинарь `/usr/local/bin/xray`
+общий, конфиг `/etc/xray-xdns/config.json`.
+
+### Инфраструктура и порт 53
+
+Живая зона `t.edgn.net` NS → `ns.edgn.net` → Hetzner. Порт 53 забираем у
+slipstream (решение 2026-09-14): останавливаем slipstream, снимаем
+`REDIRECT 53 → 5300`, XDNS биндит 53 и обслуживает готовую зону `t.edgn.net`
+— новая NS-делегация не нужна. Освобождение 53 — операторский шаг в рунбуке,
+НЕ в коде: убивать чужой сервис из кода опасно; `setup` XDNS просто упадёт с
+понятной ошибкой, если 53 занят. Откат: вернуть REDIRECT + поднять slipstream.
+
+Резолверы в ссылке — поле инбаунда, не хардкод: какой резолвер работает в РФ,
+знает только тестер. 8.8.8.8 и 1.1.1.1 в РФ заблокированы, годятся лишь для
+проверки извне; боевой — операторский.
+
+VLESS без TLS на публичный адрес Xray не поднимает: нужен `xray vlessenc`, пара
+`decryption` (сервер) / `encryption` (клиент). Берётся короткий X25519-вариант,
+НЕ ML-KEM (тот 1.5 КБ в ссылке). Пара генерится при `setup`, хранится в полях.
 
 ### Конфиг
 
-Xray на Hetzner локально (без SSH), unit `xray.service`. Инбаунд:
+Xray на Hetzner локально (без SSH), unit `xray-xdns.service`. Инбаунд:
 
 ```json
 {
   "protocol": "vless",
-  "settings": { "clients": [ { "id": "<UUID>" } ], "decryption": "none" },
+  "settings": { "clients": [ { "id": "<UUID>" } ], "decryption": "mlkem768x25519plus.native.600s.<x25519-key>" },
   "streamSettings": {
     "network": "kcp",
     "kcpSettings": { "mtu": 900 },
-    "finalmask": { "udp": [ { "type": "xdns", "settings": { "domains": ["t.<домен>:txt"] } } ] }
+    "finalmask": { "udp": [ { "type": "xdns", "settings": { "domains": ["t.edgn.net:txt"] } } ] }
   }
 }
 ```
 
-Список `clients` — из активных `User` в БД. Аутбаунд `freedom`, egress
-direct с Hetzner.
+Список `clients` — из активных `User`. Аутбаунд `freedom`, egress direct с
+Hetzner. MTU 900 сервер / 130 клиент — константы (спайком доказано: клиентский
+130 обязателен, 400 и 900 не поехали).
 
-### Модель и код
+### Модель — `Protocol="xdns"`
 
-`Protocol="xdns"` в `InboundConfig`: `ListenPort` (53), `SNI`
-переиспользуется как домен зоны, `MaskJSON` — блок finalmask с
-`resolvers` для клиентской стороны. Генератор: `buildXrayConfig` получает
-`[]User` и добавляет xdns-инбаунды. Деплой: `service/xrayhetzner.go` —
-локальная запись `/etc/xray/config.json` и `systemctl reload`.
+Новые поля `InboundConfig`:
 
-Ссылка: `vless://<uuid>@<резолвер>:53?type=kcp&...&fm=<JSON>`, где адрес
-назначения — резолвер, а не Hetzner. Два резолвера в `fm`: `8.8.8.8` и
-DNS оператора (адрес оператора подставляет тестер).
+| Поле | Назначение |
+|---|---|
+| `ListenPort` | 53 |
+| `XDNSDomain` | авторитативный домен с методом, напр. `t.edgn.net:txt` |
+| `XDNSResolvers` | клиентские резолверы для ссылки, список через запятую: `t.edgn.net:txt+udp://<resolver>:53,...` |
+| `XDNSDecryption` | серверный VLESS-ключ (`decryption`), генерится при setup |
+| `XDNSEncryption` | клиентский VLESS-ключ (`encryption`), уходит в ссылку |
+
+Генератор: новый `buildXrayXDNSConfig(xdnsInbounds, users)` (отдельно от
+RuVDS-билдера). Деплой: `service/xrayhetzner.go` — локальная запись
+`/etc/xray-xdns/config.json` и `systemctl restart xray-xdns` (Xray не умеет
+hot-reload). Билдер-паттерн как у RuVDS: `.new` → `xray -test -format json` →
+`cmp` → `mv` → restart-if-active.
+
+### Ссылка и раздача
+
+`vless://<uuid>@<резолвер>:53?type=kcp&encryption=<enc>&fm=<xdns-блок>#XDNS-<user>`,
+адрес назначения — резолвер (первый из `XDNSResolvers`), не Hetzner. Клиентский
+`fm` = `{"udp":[{"type":"xdns","settings":{"resolvers":[...]}}]}`. Только кнопкой
+`XDNS (Happ)` в боте; в подписку `/sub`/`/sub-ruvds` НЕ попадает (как маска).
+
+### API
+
+`/api/xray/xdns/{setup,reload,start,stop,status,config,logs}` — Hetzner-локальные,
+по образцу singbox/ruvds-роутов.
 
 ### Верификация
 
-Тестер в РФ, v2rayNG, инструкция только через UI (без adb). Метрики
-снимаются с трёх резолверов: 8.8.8.8, оператор, наш authoritative
-напрямую (как контроль). Сравнение с замерами dnstt из
-`docs/slipstream-poc.md`.
+Юниты на `buildXrayXDNSConfig` и билдер xdns-ссылки. Ручная: `setup` на Hetzner
+(после освобождения 53), `xray-xdns` слушает `:53`, `dig` к домену отвечает;
+тестер из РФ с Happ через операторский резолвер. Прямой путь замерен
+(540–590 КБ/с), резолверный — открытый вопрос, закрывает тестер.
 
 ## Этап 3 — бэклог
 
