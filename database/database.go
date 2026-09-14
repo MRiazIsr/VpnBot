@@ -218,7 +218,7 @@ type InboundConfig struct {
 
 	Tag           string `gorm:"uniqueIndex;not null" json:"tag"`
 	DisplayName   string `json:"display_name"`
-	Protocol      string `json:"protocol"` // "vless" | "hysteria2" | "shadowtls" | "mask"
+	Protocol      string `json:"protocol"` // "vless" | "hysteria2" | "shadowtls" | "mask" | "xdns"
 	ListenPort    int    `json:"listen_port"`
 	TLSType       string `json:"tls_type"` // "reality" | "certificate"
 	SNI           string `json:"sni"`
@@ -260,6 +260,14 @@ type InboundConfig struct {
 	// Xray как есть; он же уходит в ссылку параметром fm.
 	MaskInnerTag string `json:"mask_inner_tag"`
 	MaskJSON     string `gorm:"type:text" json:"mask_json"`
+
+	// XDNS-канал (Protocol="xdns"): отдельный Xray на Hetzner, VLESS+mKCP,
+	// данные внутри DNS-запросов. Домен зоны + клиентские резолверы + пара
+	// VLESS-шифрования (генерится xray vlessenc при setup).
+	XDNSDomain     string `json:"xdns_domain"`               // напр. "t.edgn.net:txt"
+	XDNSResolvers  string `json:"xdns_resolvers"`            // список через запятую: "t.edgn.net:txt+udp://1.2.3.4:53,..."
+	XDNSDecryption string `gorm:"type:text" json:"xdns_decryption"` // серверный ключ (decryption)
+	XDNSEncryption string `gorm:"type:text" json:"xdns_encryption"` // клиентский ключ (encryption), в ссылку
 }
 
 // --- Init ---
