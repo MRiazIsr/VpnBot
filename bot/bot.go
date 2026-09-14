@@ -191,7 +191,7 @@ func Start(token string, adminID int64) {
 		for _, ib := range inbounds {
 			label := ib.DisplayName
 			if ib.Protocol == "mask" {
-				label = ib.DisplayName + " (v2rayNG/Happ)"
+				label = ib.DisplayName + " (Happ)"
 			}
 			btnLink := connectMenu.Data(fmt.Sprintf("🔗 %s", label), "conn_link", fmt.Sprintf("%d", ib.ID))
 			btnQR := connectMenu.Data(fmt.Sprintf("📷 %s", label), "conn_qr", fmt.Sprintf("%d", ib.ID))
@@ -261,7 +261,7 @@ func Start(token string, adminID int64) {
 			return c.Send("❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден.")
 		}
 		if ib.Protocol == "mask" {
-			return c.Send(fmt.Sprintf("`%s`\n\n⚠️ Ссылка только для v2rayNG, v2rayN, Happ или Streisand. Hiddify и Shadowrocket её не поймут.", link), tele.ModeMarkdown)
+			return c.Send(fmt.Sprintf("`%s`\n\n⚠️ Основное приложение — **Happ**. Также подойдут v2rayNG, v2rayN, Streisand. Hiddify и Shadowrocket эту ссылку не поймут.", link), tele.ModeMarkdown)
 		}
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
 	})
@@ -711,7 +711,7 @@ func linkServerAddr(ib database.InboundConfig) string {
 // qrCaption — подпись к QR: для масок клиент другой.
 func qrCaption(ib database.InboundConfig) string {
 	if ib.Protocol == "mask" {
-		return fmt.Sprintf("%s — только v2rayNG / Happ / Streisand (Hiddify не подойдёт)", ib.DisplayName)
+		return fmt.Sprintf("%s — откройте в Happ (или v2rayNG / Streisand; Hiddify не подойдёт)", ib.DisplayName)
 	}
 	return fmt.Sprintf("%s — сканируйте в Hiddify", ib.DisplayName)
 }
