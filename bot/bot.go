@@ -190,7 +190,7 @@ func Start(token string, adminID int64) {
 		// Individual inbound buttons
 		for _, ib := range inbounds {
 			label := ib.DisplayName
-			if ib.Protocol == "mask" {
+			if ib.Protocol == "mask" || ib.Protocol == "xdns" {
 				label = ib.DisplayName + " (Happ)"
 			}
 			btnLink := connectMenu.Data(fmt.Sprintf("🔗 %s", label), "conn_link", fmt.Sprintf("%d", ib.ID))
@@ -260,7 +260,7 @@ func Start(token string, adminID int64) {
 		if link == "" {
 			return c.Send("❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден.")
 		}
-		if ib.Protocol == "mask" {
+		if ib.Protocol == "mask" || ib.Protocol == "xdns" {
 			return c.Send(fmt.Sprintf("`%s`\n\n⚠️ Основное приложение — **Happ**. Также подойдут v2rayNG, v2rayN, Streisand. Hiddify и Shadowrocket эту ссылку не поймут.", link), tele.ModeMarkdown)
 		}
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
@@ -710,7 +710,7 @@ func linkServerAddr(ib database.InboundConfig) string {
 
 // qrCaption — подпись к QR: для масок клиент другой.
 func qrCaption(ib database.InboundConfig) string {
-	if ib.Protocol == "mask" {
+	if ib.Protocol == "mask" || ib.Protocol == "xdns" {
 		return fmt.Sprintf("%s — откройте в Happ (или v2rayNG / Streisand; Hiddify не подойдёт)", ib.DisplayName)
 	}
 	return fmt.Sprintf("%s — сканируйте в Hiddify", ib.DisplayName)
