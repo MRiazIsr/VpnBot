@@ -112,6 +112,15 @@ func SetupRouter(r *gin.Engine) {
 			auth.GET("/xray/ruvds/config", handlers.PreviewXrayRuVDSConfig())
 			auth.GET("/xray/ruvds/logs", handlers.GetXrayRuVDSLogs())
 
+			// XDNS-канал на Hetzner (локальный Xray)
+			auth.POST("/xray/xdns/setup", handlers.SetupXrayXDNS())
+			auth.POST("/xray/xdns/reload", handlers.ReloadXrayXDNS())
+			auth.POST("/xray/xdns/start", handlers.StartXrayXDNS())
+			auth.POST("/xray/xdns/stop", handlers.StopXrayXDNS())
+			auth.GET("/xray/xdns/status", handlers.GetXrayXDNSStatus())
+			auth.GET("/xray/xdns/config", handlers.PreviewXrayXDNSConfig())
+			auth.GET("/xray/xdns/logs", handlers.GetXrayXDNSLogs())
+
 			// Telemt mirror on RuVDS
 			auth.POST("/telemt/ruvds/setup", handlers.SetupTelemtRuVDS())
 			auth.POST("/telemt/ruvds/reload", handlers.ReloadTelemtRuVDS())

@@ -111,6 +111,16 @@ func validateMaskInbound(input *database.InboundConfig) string {
 	return ""
 }
 
+// validateXDNSInboundHandler — проверки xdns-инбаунда при create/update.
+func validateXDNSInboundHandler(input *database.InboundConfig) string {
+	if err := service.ValidateXDNSInbound(*input); err != nil {
+		return err.Error()
+	}
+	// exit решает freedom-аутбаунд самого XDNS; ExitOutbound не нужен.
+	input.ExitOutbound = ""
+	return ""
+}
+
 // enabledMasksPointingAt — enabled mask-инбаунды, чей mask_inner_tag
 // указывает на tag. excludeID (0 — не исключать) — сам инбаунд, если это
 // маска и мы проверяем её же обновление.
@@ -275,14 +285,19 @@ func CreateInbound() gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Tag is required"})
 			return
 		}
-		if input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" && input.Protocol != "mask" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', 'shadowtls', or 'mask'"})
+		if input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" && input.Protocol != "mask" && input.Protocol != "xdns" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', 'shadowtls', 'mask', or 'xdns'"})
 			return
 		}
 
 		switch input.Protocol {
 		case "mask":
 			if msg := validateMaskInbound(&input); msg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+				return
+			}
+		case "xdns":
+			if msg := validateXDNSInboundHandler(&input); msg != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 				return
 			}
@@ -395,8 +410,8 @@ func UpdateInbound() gin.HandlerFunc {
 
 		trimInboundStrings(&input)
 
-		if input.Protocol != "" && input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" && input.Protocol != "mask" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', 'shadowtls', or 'mask'"})
+		if input.Protocol != "" && input.Protocol != "vless" && input.Protocol != "hysteria2" && input.Protocol != "shadowtls" && input.Protocol != "mask" && input.Protocol != "xdns" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Protocol must be 'vless', 'hysteria2', 'shadowtls', 'mask', or 'xdns'"})
 			return
 		}
 
@@ -439,6 +454,23 @@ func UpdateInbound() gin.HandlerFunc {
 				return
 			}
 			input.ExitOutbound = ""
+		case "xdns":
+			// Для частичного апдейта берём недостающие поля из existing.
+			merged := existing
+			if input.ListenPort != 0 {
+				merged.ListenPort = input.ListenPort
+			}
+			if input.XDNSDomain != "" {
+				merged.XDNSDomain = input.XDNSDomain
+			}
+			if input.XDNSResolvers != "" {
+				merged.XDNSResolvers = input.XDNSResolvers
+			}
+			if msg := validateXDNSInboundHandler(&merged); msg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+				return
+			}
+			input.ExitOutbound = ""
 		case "shadowtls":
 		default:
 			if err := validateInboundCombination(&input); err != "" {
@@ -474,8 +506,9 @@ func UpdateInbound() gin.HandlerFunc {
 		database.DB.Model(&existing).Updates(input)
 
 		// Updates(struct) пропускает нулевые значения, поэтому exit_outbound
-		// для маски обнуляем явно: маршрут решает внутренний инбаунд.
-		if effectiveProtocol == "mask" {
+		// для маски и xdns обнуляем явно: маршрут решает внутренний инбаунд
+		// (маска) или freedom-аутбаунд самого XDNS.
+		if effectiveProtocol == "mask" || effectiveProtocol == "xdns" {
 			database.DB.Model(&existing).Update("exit_outbound", "")
 		}
 

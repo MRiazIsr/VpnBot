@@ -38,7 +38,8 @@ func GetSubscription() gin.HandlerFunc {
 		links := []string{}
 		for _, ib := range inbounds {
 			// Xray-сайдкар стоит только на RuVDS: Hetzner-ссылка на маску не сработает.
-			if ib.Protocol == "mask" {
+			// xdns раздаётся только кнопкой в боте, не через общую подписку.
+			if ib.Protocol == "mask" || ib.Protocol == "xdns" {
 				continue
 			}
 			if link := service.GenerateLinkForInbound(ib, user, serverIP); link != "" {
@@ -87,7 +88,8 @@ func GetSubscriptionRuVDS() gin.HandlerFunc {
 			// Маску не отдаём в общей подписке: ссылку с fm понимают только
 			// Xray-клиенты (v2rayNG/Happ/Streisand), а у части базы Hiddify —
 			// строку в подписке они не откроют. Раздаётся только кнопкой в боте.
-			if ib.Protocol == "mask" {
+			// xdns — по той же причине.
+			if ib.Protocol == "mask" || ib.Protocol == "xdns" {
 				continue
 			}
 			// Используем RuVDS IP вместо ServerAddress/SERVER_IP — клиент пойдёт на RuVDS.
