@@ -84,6 +84,12 @@ func GetSubscriptionRuVDS() gin.HandlerFunc {
 
 		links := []string{}
 		for _, ib := range inbounds {
+			// Маску не отдаём в общей подписке: ссылку с fm понимают только
+			// Xray-клиенты (v2rayNG/Happ/Streisand), а у части базы Hiddify —
+			// строку в подписке они не откроют. Раздаётся только кнопкой в боте.
+			if ib.Protocol == "mask" {
+				continue
+			}
 			// Используем RuVDS IP вместо ServerAddress/SERVER_IP — клиент пойдёт на RuVDS.
 			ibCopy := ib
 			ibCopy.ServerAddress = "" // сбрасываем override чтобы serverAddr-параметр сработал
