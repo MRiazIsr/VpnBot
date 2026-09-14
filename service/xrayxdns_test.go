@@ -92,3 +92,28 @@ func TestXDNSClientFinalmask(t *testing.T) {
 		t.Errorf("resolver not trimmed: %s", fm)
 	}
 }
+
+func TestGenerateXDNSLink(t *testing.T) {
+	ib := xdnsFixture()
+	user := database.User{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}
+	link := GenerateXDNSLink(ib, user)
+	if !strings.HasPrefix(link, "vless://550e8400-e29b-41d4-a716-446655440000@8.8.8.8:53?") {
+		t.Fatalf("expected first resolver host, got %s", link)
+	}
+	for _, want := range []string{"type=kcp", "encryption=mlkem768x25519plus", "fm=%7B%22udp%22", "seed=130"} {
+		if !strings.Contains(link, want) {
+			t.Errorf("missing %s in %s", want, link)
+		}
+	}
+	if !strings.HasSuffix(link, "#XDNS-alice") {
+		t.Errorf("expected #XDNS-alice fragment, got %s", link)
+	}
+}
+
+func TestGenerateXDNSLink_NoResolvers(t *testing.T) {
+	ib := xdnsFixture()
+	ib.XDNSResolvers = ""
+	if got := GenerateXDNSLink(ib, database.User{UUID: "u"}); got != "" {
+		t.Fatalf("expected empty link without resolvers, got %q", got)
+	}
+}

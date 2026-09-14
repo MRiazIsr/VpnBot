@@ -563,6 +563,10 @@ func GenerateLinkForInbound(ib database.InboundConfig, user database.User, serve
 		return GenerateMaskLink(ib, inner, user, serverAddr)
 	}
 
+	if ib.Protocol == "xdns" {
+		return GenerateXDNSLink(ib, user)
+	}
+
 	if ib.Protocol == "shadowtls" {
 		return generateShadowTLSLink(ib, user, serverAddr)
 	}
@@ -707,6 +711,43 @@ func GenerateMaskLink(mask, inner database.InboundConfig, user database.User, se
 	q.Set("fm", compact.String())
 	u.RawQuery = q.Encode()
 	u.Fragment = mask.Tag
+	return u.String()
+}
+
+// firstResolverHost достаёт "IP:port" из первого резолвера XDNSResolvers
+// (формат domain[:method]+udp://IP:port). "" если не распарсить.
+func firstResolverHost(resolvers string) string {
+	rs := splitResolvers(resolvers)
+	if len(rs) == 0 {
+		return ""
+	}
+	i := strings.Index(rs[0], "+udp://")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSuffix(rs[0][i+len("+udp://"):], "/")
+}
+
+// GenerateXDNSLink — ссылка XDNS для Xray-клиентов (Happ). Адрес назначения —
+// первый резолвер, а не Hetzner: рекурсия резолвера доходит до нашего
+// authoritative и «отмывает» L3. Понимают только Xray-клиенты.
+func GenerateXDNSLink(ib database.InboundConfig, user database.User) string {
+	host := firstResolverHost(ib.XDNSResolvers)
+	if host == "" || ib.XDNSEncryption == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("type", "kcp")
+	q.Set("seed", fmt.Sprintf("%d", XDNSClientMTU)) // клиентский MTU через kcp seed-параметр
+	q.Set("encryption", ib.XDNSEncryption)
+	q.Set("fm", xdnsClientFinalmask(ib.XDNSResolvers))
+	u := url.URL{
+		Scheme:   "vless",
+		User:     url.User(user.UUID),
+		Host:     host,
+		RawQuery: q.Encode(),
+		Fragment: "XDNS-" + user.Username,
+	}
 	return u.String()
 }
 
