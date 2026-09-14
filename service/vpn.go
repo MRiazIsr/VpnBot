@@ -437,6 +437,16 @@ func GenerateAndReload() error {
 			log.Println("RuVDS sing-box reload error:", rerr)
 		}
 	}
+
+	// XDNS-канал на Hetzner (локальный Xray). Ошибка не рушит основной reload.
+	if HasXDNSInbounds() {
+		xdnsJSON, xerr := GenerateXDNSConfig()
+		if xerr != nil {
+			log.Println("XDNS config error:", xerr)
+		} else if derr := DeployXDNSConfig(xdnsJSON); derr != nil {
+			log.Println("XDNS deploy error:", derr)
+		}
+	}
 	return hetznerErr
 }
 
