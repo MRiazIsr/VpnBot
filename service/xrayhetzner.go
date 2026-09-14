@@ -102,7 +102,7 @@ func GenerateXDNSConfig() ([]byte, error) {
 	var users []database.User
 	database.DB.Where("status = ?", "active").Find(&users)
 
-	return buildXrayXDNSConfig(inbounds, users)
+	return buildXrayXDNSConfig(inbounds, users, GetHetznerServerIP())
 }
 
 // HasXDNSInbounds — есть ли в БД хотя бы одна запись Protocol="xdns", в любом
@@ -208,9 +208,12 @@ func XrayXDNSLogs(lines int) (string, error) {
 }
 
 // Port53Owner — диагностика: кто (если кто-то) слушает :53 на Hetzner.
-// Пустая строка — порт свободен.
+// Пустая строка — порт свободен. Loopback-стабы systemd-resolved
+// (127.0.0.53, 127.0.0.54) исключены: xdns бинднится на публичный адрес
+// (см. buildXrayXDNSConfig), поэтому конфликт возможен только с
+// процессом, слушающим публичный/непетлевой :53.
 func Port53Owner() string {
-	out, _ := runLocal("ss -lunp | grep ':53 ' | head -1")
+	out, _ := runLocal("ss -lunp | grep ':53 ' | grep -v '127.0.0.5' | head -1")
 	return strings.TrimSpace(out)
 }
 

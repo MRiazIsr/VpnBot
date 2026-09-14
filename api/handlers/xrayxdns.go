@@ -21,7 +21,7 @@ func SetupXrayXDNS() gin.HandlerFunc {
 // POST /api/xray/xdns/reload
 func ReloadXrayXDNS() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if err := service.GenerateAndReload(); err != nil {
+		if err := service.GenerateAndReloadXDNS(); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}

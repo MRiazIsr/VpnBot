@@ -86,7 +86,13 @@ type xdnsConfig struct {
 
 // buildXrayXDNSConfig — чистая функция: JSON Xray для XDNS на Hetzner.
 // nil,nil если xdns-инбаундов нет. Ошибка если у enabled нет ключей (setup).
-func buildXrayXDNSConfig(inbounds []database.InboundConfig, users []database.User) ([]byte, error) {
+// listen — адрес bind инбаунда; "" по умолчанию даёт "0.0.0.0". Специфический
+// публичный адрес нужен, чтобы не конфликтовать с systemd-resolved
+// (127.0.0.53:53) и не ловить его на порт-53 guard (Port53Owner).
+func buildXrayXDNSConfig(inbounds []database.InboundConfig, users []database.User, listen string) ([]byte, error) {
+	if listen == "" {
+		listen = "0.0.0.0"
+	}
 	clients := []xdnsVLessClient{}
 	for _, u := range buildNewUsers(users) {
 		clients = append(clients, xdnsVLessClient{ID: u.UUID})
@@ -114,7 +120,7 @@ func buildXrayXDNSConfig(inbounds []database.InboundConfig, users []database.Use
 		})
 		cfg.Inbounds = append(cfg.Inbounds, xdnsInbound{
 			Tag:      ib.Tag,
-			Listen:   "0.0.0.0",
+			Listen:   listen,
 			Port:     ib.ListenPort,
 			Protocol: "vless",
 			Settings: xdnsInboundSettings{Clients: clients, Decryption: ib.XDNSDecryption},

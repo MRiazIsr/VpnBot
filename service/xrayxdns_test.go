@@ -34,7 +34,7 @@ func TestValidateXDNSInbound(t *testing.T) {
 }
 
 func TestBuildXrayXDNSConfig_None(t *testing.T) {
-	out, err := buildXrayXDNSConfig([]database.InboundConfig{{Tag: "DE", Protocol: "vless"}}, nil)
+	out, err := buildXrayXDNSConfig([]database.InboundConfig{{Tag: "DE", Protocol: "vless"}}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestBuildXrayXDNSConfig_None(t *testing.T) {
 
 func TestBuildXrayXDNSConfig_Single(t *testing.T) {
 	users := []database.User{{Username: "alice", UUID: "550e8400-e29b-41d4-a716-446655440000"}}
-	out, err := buildXrayXDNSConfig([]database.InboundConfig{xdnsFixture()}, users)
+	out, err := buildXrayXDNSConfig([]database.InboundConfig{xdnsFixture()}, users, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +58,7 @@ func TestBuildXrayXDNSConfig_Single(t *testing.T) {
 		`"protocol": "vless"`, `"port": 53`, `"network": "kcp"`, `"mtu": 900`,
 		`"type": "xdns"`, `"t.edgn.net:txt"`, `SERVERKEY`,
 		`550e8400-e29b-41d4-a716-446655440000`, `"protocol": "freedom"`,
+		`"listen": "0.0.0.0"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in:\n%s", want, got)
@@ -66,12 +67,20 @@ func TestBuildXrayXDNSConfig_Single(t *testing.T) {
 	if strings.Contains(got, "CLIENTKEY") {
 		t.Errorf("client encryption key must NOT be in server config: %s", got)
 	}
+
+	outAddr, err := buildXrayXDNSConfig([]database.InboundConfig{xdnsFixture()}, users, "203.0.113.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(outAddr), `"listen": "203.0.113.9"`) {
+		t.Errorf("expected listen bound to 203.0.113.9, got:\n%s", outAddr)
+	}
 }
 
 func TestBuildXrayXDNSConfig_MissingKeysErrors(t *testing.T) {
 	c := xdnsFixture()
 	c.XDNSDecryption = ""
-	if _, err := buildXrayXDNSConfig([]database.InboundConfig{c}, nil); err == nil {
+	if _, err := buildXrayXDNSConfig([]database.InboundConfig{c}, nil, ""); err == nil {
 		t.Fatal("expected error when XDNSDecryption empty (setup not run)")
 	}
 }
@@ -100,10 +109,13 @@ func TestGenerateXDNSLink(t *testing.T) {
 	if !strings.HasPrefix(link, "vless://550e8400-e29b-41d4-a716-446655440000@8.8.8.8:53?") {
 		t.Fatalf("expected first resolver host, got %s", link)
 	}
-	for _, want := range []string{"type=kcp", "encryption=mlkem768x25519plus", "fm=%7B%22udp%22", "seed=130"} {
+	for _, want := range []string{"type=kcp", "encryption=mlkem768x25519plus", "fm=%7B%22udp%22"} {
 		if !strings.Contains(link, want) {
 			t.Errorf("missing %s in %s", want, link)
 		}
+	}
+	if strings.Contains(link, "seed=") {
+		t.Errorf("seed must not be in xdns link: %s", link)
 	}
 	if !strings.HasSuffix(link, "#XDNS-alice") {
 		t.Errorf("expected #XDNS-alice fragment, got %s", link)

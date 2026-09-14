@@ -440,14 +440,26 @@ func GenerateAndReload() error {
 
 	// XDNS-канал на Hetzner (локальный Xray). Ошибка не рушит основной reload.
 	if HasXDNSInbounds() {
-		xdnsJSON, xerr := GenerateXDNSConfig()
-		if xerr != nil {
-			log.Println("XDNS config error:", xerr)
-		} else if derr := DeployXDNSConfig(xdnsJSON); derr != nil {
-			log.Println("XDNS deploy error:", derr)
+		if xerr := GenerateAndReloadXDNS(); xerr != nil {
+			log.Println("XDNS reload error:", xerr)
 		}
 	}
 	return hetznerErr
+}
+
+// GenerateAndReloadXDNS — перегенерация + деплой config.json XDNS-канала
+// (локальный Xray на Hetzner, :53). Мирроит GenerateAndReloadRuVDS: вызывающая
+// сторона решает, фатальна ли ошибка (GenerateAndReload — нет, ReloadXrayXDNS
+// handler — да).
+func GenerateAndReloadXDNS() error {
+	cfgJSON, err := GenerateXDNSConfig()
+	if err != nil {
+		return err
+	}
+	if cfgJSON == nil {
+		return DeployXDNSConfig(nil)
+	}
+	return DeployXDNSConfig(cfgJSON)
 }
 
 // GenerateRuVDSConfig строит JSON-конфиг sing-box для RuVDS-фронта:
@@ -748,7 +760,11 @@ func GenerateXDNSLink(ib database.InboundConfig, user database.User) string {
 	}
 	q := url.Values{}
 	q.Set("type", "kcp")
-	q.Set("seed", fmt.Sprintf("%d", XDNSClientMTU)) // клиентский MTU через kcp seed-параметр
+	// seed — это AES-128-GCM ключ обфускации mKCP (kcpSettings.seed), а не MTU.
+	// Сервер обфускацию не включает; ссылка с seed заставит клиента
+	// обфусцировать датаграммы, которые сервер молча дропнет (0 B/s).
+	// Share-link формат Xray не умеет передавать client-side MTU — его
+	// приходится выставлять в клиенте вручную (см. docs/xdns-runbook.md).
 	q.Set("encryption", ib.XDNSEncryption)
 	q.Set("fm", xdnsClientFinalmask(ib.XDNSResolvers))
 	u := url.URL{

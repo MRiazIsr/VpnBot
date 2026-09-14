@@ -258,10 +258,14 @@ func Start(token string, adminID int64) {
 		}
 		link := service.GenerateLinkForInbound(ib, user, addr)
 		if link == "" {
-			return c.Send("❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден.")
+			return c.Send(emptyLinkMsg(ib))
 		}
 		if ib.Protocol == "mask" || ib.Protocol == "xdns" {
-			return c.Send(fmt.Sprintf("`%s`\n\n⚠️ Основное приложение — **Happ**. Также подойдут v2rayNG, v2rayN, Streisand. Hiddify и Shadowrocket эту ссылку не поймут.", link), tele.ModeMarkdown)
+			warning := "⚠️ Основное приложение — **Happ**. Также подойдут v2rayNG, v2rayN, Streisand. Hiddify и Shadowrocket эту ссылку не поймут."
+			if ib.Protocol == "xdns" {
+				warning += "\n⚠️ После импорта задайте в настройках mKCP параметр MTU = 130, иначе соединение не поедет."
+			}
+			return c.Send(fmt.Sprintf("`%s`\n\n%s", link, warning), tele.ModeMarkdown)
 		}
 		return c.Send(fmt.Sprintf("`%s`", link), tele.ModeMarkdown)
 	})
@@ -277,7 +281,7 @@ func Start(token string, adminID int64) {
 		}
 		link := service.GenerateLinkForInbound(ib, user, addr)
 		if link == "" {
-			return c.Send("❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден.")
+			return c.Send(emptyLinkMsg(ib))
 		}
 
 		qr, qrErr := qrcode.Encode(link, qrcode.Medium, 256)
@@ -698,6 +702,16 @@ func getInboundAndUser(c tele.Context) (database.InboundConfig, database.User, e
 // maskUnavailableMsg — RUVDS_IP не задан, поэтому mask-инбаунду некуда
 // указывать ссылку (linkServerAddr вернёт "" — единственный такой случай).
 const maskUnavailableMsg = "❌ RUVDS_IP не задан — маска недоступна."
+
+// emptyLinkMsg — GenerateLinkForInbound вернул "" (протокол-специфичная
+// причина отличается: у mask — не найден/выключен внутренний VLESS-инбаунд,
+// у xdns — ещё не выполнен setup, XDNSEncryption пуст).
+func emptyLinkMsg(ib database.InboundConfig) string {
+	if ib.Protocol == "xdns" {
+		return "❌ XDNS ещё не настроен — выполните setup."
+	}
+	return "❌ Не удалось собрать ссылку: внутренний инбаунд маски не найден."
+}
 
 // linkServerAddr — адрес сервера для ссылки инбаунда. Mask-инбаунды живут
 // только на RuVDS (Xray-сайдкар), остальные — как раньше, через ServerIP.

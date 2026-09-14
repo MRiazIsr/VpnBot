@@ -264,8 +264,8 @@ type InboundConfig struct {
 	// XDNS-канал (Protocol="xdns"): отдельный Xray на Hetzner, VLESS+mKCP,
 	// данные внутри DNS-запросов. Домен зоны + клиентские резолверы + пара
 	// VLESS-шифрования (генерится xray vlessenc при setup).
-	XDNSDomain     string `json:"xdns_domain"`               // напр. "t.edgn.net:txt"
-	XDNSResolvers  string `json:"xdns_resolvers"`            // список через запятую: "t.edgn.net:txt+udp://1.2.3.4:53,..."
+	XDNSDomain     string `json:"xdns_domain"`                      // напр. "t.edgn.net:txt"
+	XDNSResolvers  string `json:"xdns_resolvers"`                   // список через запятую: "t.edgn.net:txt+udp://1.2.3.4:53,..."
 	XDNSDecryption string `gorm:"type:text" json:"xdns_decryption"` // серверный ключ (decryption)
 	XDNSEncryption string `gorm:"type:text" json:"xdns_encryption"` // клиентский ключ (encryption), в ссылку
 }
