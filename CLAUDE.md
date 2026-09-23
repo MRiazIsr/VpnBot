@@ -28,8 +28,8 @@ VPN management system: Go backend + Telegram bot + Next.js admin panel.
 
 ### Packages
 
-- **`database/`** — GORM models (`User`, `InboundConfig`, `ConnectionLog`, `WireGuardConfig`, `TelemetConfig`, `TurnConfig`), SQLite init with auto-migration and seed data
-- **`service/`** — sing-box JSON config generation (`GenerateAndReload()` for Hetzner + `GenerateAndReloadRuVDS()` for the RuVDS mirror over SSH), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go` + `portforward_nft.go`), connectivity checks (`network.go`), VK TURN tunnel (`turnproxy.go`), WireGuard tunnel RuVDS↔Hetzner (`wireguard.go`), sing-box mirror on RuVDS via SSH (`singboxruvds.go`), telemt mirror on RuVDS via SSH (`telemtruvds.go`), Xray finalmask sidecar on RuVDS via SSH (`xray.go` — pure config builder, `xrayruvds.go` — SSH mirror), XDNS channel on Hetzner (`xrayxdns.go` — pure builder, `xrayhetzner.go` — local deploy of `xray-xdns.service` on :53), health monitoring (`service/health/`)
+- **`database/`** — GORM models (`User`, `InboundConfig`, `ConnectionLog`, `WireGuardConfig`, `TelemetConfig`), SQLite init with auto-migration and seed data
+- **`service/`** — sing-box JSON config generation (`GenerateAndReload()` for Hetzner + `GenerateAndReloadRuVDS()` for the RuVDS mirror over SSH), subscription link generation (`GenerateLinkForInbound()`), traffic tracking via gRPC V2Ray Stats API, Hetzner Cloud Firewall (`firewall.go`), RuVDS iptables port forwarding via SSH (`portforward.go` + `portforward_nft.go`), connectivity checks (`network.go`), WireGuard tunnel RuVDS↔Hetzner (`wireguard.go`), sing-box mirror on RuVDS via SSH (`singboxruvds.go`), telemt mirror on RuVDS via SSH (`telemtruvds.go`), Xray finalmask sidecar on RuVDS via SSH (`xray.go` — pure config builder, `xrayruvds.go` — SSH mirror), XDNS channel on Hetzner (`xrayxdns.go` — pure builder, `xrayhetzner.go` — local deploy of `xray-xdns.service` on :53), health monitoring (`service/health/`)
 - **`api/handlers/`** — REST handlers: auth, users, inbounds CRUD, stats, public subscription endpoints (`/sub/:token` for Hetzner, `/sub-ruvds/:token` for RuVDS)
 - **`api/middleware/`** — CORS and JWT Bearer auth
 - **`api/router/`** — Route registration under `/api` with auth group
@@ -110,7 +110,7 @@ Two servers, complementary roles:
 - `/sub/:token` — Hetzner-facing (legacy links continue to work; `serverAddr` = `SERVER_IP` = Hetzner IP by default)
 - `/sub-ruvds/:token` — RuVDS-facing (new links; `serverAddr` = RuVDS IP, used when `WireGuardConfig.Enabled=true`)
 
-Legacy iptables DNAT/MASQUERADE in `service/portforward.go` / `portforward_nft.go` remains for external services (VK TURN etc.); the actual VPN traffic path uses sing-box + WireGuard.
+Legacy iptables DNAT/MASQUERADE in `service/portforward.go` / `portforward_nft.go` remains for external services; the actual VPN traffic path uses sing-box + WireGuard.
 
 ## Testing
 

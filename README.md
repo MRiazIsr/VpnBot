@@ -23,9 +23,8 @@ tooling here.
 - **Backhaul failover** — `service/backhaul/` probes several paths between the
   two nodes (direct WireGuard, WSS via a CDN, emergency SSH), decides which one
   is healthy and switches with a rollback drill (`scripts/backhaul/`).
-- **Fallbacks** — MTProto proxy via `telemt` with FakeTLS, and a TURN-based
-  tunnel bootstrapped from a public VoIP service (`service/telemt*.go`,
-  `service/turnproxy.go`).
+- **Fallbacks** — MTProto proxy via `telemt` with FakeTLS
+  (`service/telemt*.go`).
 - **Operations** — health monitoring with Telegram alerts, Hetzner Cloud
   firewall management, nftables port forwarding, a decoy website for the
   front node, idempotent install scripts under `deploy/`.
@@ -57,7 +56,7 @@ GORM/SQLite + sing-box config generation`.
 | `api/` | REST handlers, JWT middleware, routes |
 | `bot/` | Telegram bot and health alarms |
 | `database/` | GORM models, migrations, first-run seeding |
-| `service/` | sing-box config builder, link generation, WireGuard, firewall, port forwarding, telemt, TURN, backhaul, health |
+| `service/` | sing-box config builder, link generation, WireGuard, firewall, port forwarding, telemt, backhaul, health |
 | `cmd/` | `backhaul-probe` and `backhaul-monitor` binaries |
 | `deploy/` | Install scripts for the exit node, the front node, an IL node and a Yandex Cloud CDN leg; nftables/nfqws rules; decoy site |
 | `docs/` | Design specs and implementation plans for each iteration (DPI hardening, MTProxy variants, multipath slipstream client, AnyTLS relay), plus runbooks |

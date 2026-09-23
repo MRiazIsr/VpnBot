@@ -8,7 +8,7 @@ import (
 )
 
 // telemt на RuVDS: те же пути и константы что и в telemt.go.
-// Управление через SSH (паттерн из turnproxy.go).
+// Управление через SSH.
 
 // TelemtPinnedVersion — версия, на которую UpgradeTelemtRuVDS обновляет бинарник.
 // Пиним явно вместо releases/latest: issue telemt/telemt#628 показал, что

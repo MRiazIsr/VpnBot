@@ -59,22 +59,7 @@ func SetupRouter(r *gin.Engine) {
 			auth.POST("/network/ping", handlers.PingPort())
 			auth.GET("/network/check-all", handlers.CheckAllPorts())
 
-			// VK TURN Tunnel
-			auth.GET("/turn/config", handlers.GetTurnConfig())
-			auth.PUT("/turn/config", handlers.UpdateTurnConfig())
-			auth.POST("/turn/setup", handlers.SetupTurn())
-			auth.POST("/turn/start", handlers.StartTurn())
-			auth.POST("/turn/stop", handlers.StopTurn())
-			auth.GET("/turn/status", handlers.GetTurnStatus())
-			auth.POST("/turn/create-call", handlers.CreateVKCall())
-			auth.POST("/turn/test-creds", handlers.TestTurnCreds())
 
-			// VK TURN Client (RuVDS)
-			auth.POST("/turn/client/setup", handlers.SetupTurnClient())
-			auth.POST("/turn/client/start", handlers.StartTurnClient())
-			auth.POST("/turn/client/stop", handlers.StopTurnClient())
-			auth.GET("/turn/client/status", handlers.GetTurnClientStatus())
-			auth.GET("/turn/client/link", handlers.GetTurnClientLink())
 
 			// Telemt (MTProto proxy)
 			auth.GET("/telemt/config", handlers.GetTelemetConfig())

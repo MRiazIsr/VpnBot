@@ -30,11 +30,6 @@ func main() {
 		log.Println("Error setting up telemt:", err)
 	}
 
-	// Настройка VK TURN tunnel если включён
-	if err := service.SetupTurnProxy(); err != nil {
-		log.Println("Error setting up VK TURN tunnel:", err)
-	}
-
 	// Настройка WireGuard-туннеля RuVDS↔Hetzner (если включён в БД)
 	if err := service.SetupWireGuard(); err != nil {
 		log.Println("Error setting up WireGuard:", err)
