@@ -65,6 +65,29 @@ type User struct {
 	SubscriptionToken string     `gorm:"uniqueIndex" json:"subscription_token"`
 }
 
+// TrafficDaily — трафик пользователя за сутки (MSK) на одном сервере.
+// «За месяц» и история считаются агрегацией отсюда; users.traffic_used —
+// накопительный счётчик за всё время (по нему работает лимит).
+type TrafficDaily struct {
+	ID       uint   `gorm:"primaryKey" json:"id"`
+	UserID   uint   `gorm:"uniqueIndex:idx_td_user_day_srv" json:"user_id"`
+	Day      string `gorm:"uniqueIndex:idx_td_user_day_srv;size:10" json:"day"`    // "2026-09-23"
+	Server   string `gorm:"uniqueIndex:idx_td_user_day_srv;size:16" json:"server"` // "hetzner" | "ruvds"
+	Upload   int64  `json:"upload"`
+	Download int64  `json:"download"`
+}
+
+// InboundTrafficDaily — трафик подключения (inbound tag) за сутки на сервере.
+// Нужен для анализа доступа: какие протоколы реально несут трафик.
+type InboundTrafficDaily struct {
+	ID       uint   `gorm:"primaryKey" json:"id"`
+	Tag      string `gorm:"uniqueIndex:idx_itd_tag_day_srv;size:64" json:"tag"`
+	Day      string `gorm:"uniqueIndex:idx_itd_tag_day_srv;size:10" json:"day"`
+	Server   string `gorm:"uniqueIndex:idx_itd_tag_day_srv;size:16" json:"server"`
+	Upload   int64  `json:"upload"`
+	Download int64  `json:"download"`
+}
+
 type ConnectionLog struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	UserID    uint      `gorm:"index" json:"user_id"`
@@ -262,7 +285,7 @@ func Init(path string) {
 	}
 
 	// Миграция схемы
-	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{}, &WireGuardConfig{}, &HealthConfig{})
+	err = DB.AutoMigrate(&User{}, &ConnectionLog{}, &InboundConfig{}, &TelemetConfig{}, &TelemetUser{}, &WireGuardConfig{}, &HealthConfig{}, &TrafficDaily{}, &InboundTrafficDaily{})
 	if err != nil {
 		log.Fatal("Migration failed:", err)
 	}

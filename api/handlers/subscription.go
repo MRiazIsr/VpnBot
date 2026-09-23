@@ -25,6 +25,18 @@ func inSubscription(ib database.InboundConfig) bool {
 	return ib.ExitOutbound != "direct"
 }
 
+// subscriptionUserinfo — заголовок для клиентов (Hiddify/Happ показывают
+// «потрачено из лимита»). upload — учтённый за историю traffic_daily,
+// download — остаток traffic_used: сумма равна счётчику, по которому
+// работает лимит. Месяц в стандартный заголовок не помещается — бот/API.
+func subscriptionUserinfo(user database.User, upload int64) string {
+	download := user.TrafficUsed - upload
+	if download < 0 {
+		download = 0
+	}
+	return fmt.Sprintf("upload=%d; download=%d; total=%d", upload, download, user.TrafficLimit)
+}
+
 func GetSubscription() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.Param("token")
@@ -63,7 +75,7 @@ func GetSubscription() gin.HandlerFunc {
 
 		c.Header("Content-Type", "text/plain")
 		c.Header("Profile-Update-Interval", "6")
-		c.Header("Subscription-Userinfo", fmt.Sprintf("upload=0; download=%d; total=%d", user.TrafficUsed, user.TrafficLimit))
+		c.Header("Subscription-Userinfo", subscriptionUserinfo(user, service.UserUploadTotal(user.ID)))
 		c.String(200, body)
 	}
 }
@@ -112,7 +124,7 @@ func GetSubscriptionRuVDS() gin.HandlerFunc {
 
 		c.Header("Content-Type", "text/plain")
 		c.Header("Profile-Update-Interval", "6")
-		c.Header("Subscription-Userinfo", fmt.Sprintf("upload=0; download=%d; total=%d", user.TrafficUsed, user.TrafficLimit))
+		c.Header("Subscription-Userinfo", subscriptionUserinfo(user, service.UserUploadTotal(user.ID)))
 		c.String(200, body)
 	}
 }

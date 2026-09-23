@@ -45,6 +45,9 @@ func SetupRouter(r *gin.Engine) {
 
 			// Stats
 			auth.GET("/stats", handlers.GetStats())
+			auth.GET("/traffic/users", handlers.GetTrafficUsers())
+			auth.GET("/traffic/users/:id", handlers.GetTrafficUser())
+			auth.GET("/traffic/inbounds", handlers.GetTrafficInbounds())
 
 			// Network (Firewall + Port Forwarding + Connectivity)
 			auth.GET("/network/status", handlers.GetNetworkStatus())

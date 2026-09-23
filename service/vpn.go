@@ -2,7 +2,6 @@ package service
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -17,12 +16,6 @@ import (
 	"strings"
 	"time"
 	"vpnbot/database"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"gorm.io/gorm"
-
-	"github.com/v2fly/v2ray-core/v4/app/stats/command"
 )
 
 const ConfigPath = "/etc/sing-box/config.json"
@@ -342,6 +335,21 @@ func loadExtraOutbound() (map[string]any, error) {
 	return out, nil
 }
 
+// statsExperimental — блок V2Ray Stats API (учёт трафика, service/traffic.go)
+// по тегам sing-box инбаундов и active-пользователям.
+func statsExperimental(inboundTags []string, users []database.User) *ExperimentalConfig {
+	return &ExperimentalConfig{
+		V2RayAPI: V2RayAPIConfig{
+			Listen: ApiAddr,
+			Stats: StatsConfig{
+				Enabled:  true,
+				Inbounds: inboundTags,
+				Users:    buildUserNames(users),
+			},
+		},
+	}
+}
+
 // buildSingBoxConfig строит sing-box конфиг из inbound'ов + пользователей.
 // extraOutbound (nil ok) инжектится в начало outbounds.
 // finalTag (пусто ok) — тег route.final; если пусто, используется "direct".
@@ -394,18 +402,9 @@ func buildSingBoxConfig(inbounds []database.InboundConfig, users []database.User
 			Timestamp: true,
 			Output:    "/etc/sing-box/access.log",
 		},
-		Experimental: &ExperimentalConfig{
-			V2RayAPI: V2RayAPIConfig{
-				Listen: ApiAddr,
-				Stats: StatsConfig{
-					Enabled:  true,
-					Inbounds: inboundTags,
-					Users:    buildUserNames(users),
-				},
-			},
-		},
-		Inbounds:  singboxInbounds,
-		Outbounds: outbounds,
+		Experimental: statsExperimental(inboundTags, users),
+		Inbounds:     singboxInbounds,
+		Outbounds:    outbounds,
 		Route: &RouteConfig{
 			Rules: rules,
 			Final: finalTag,
@@ -525,6 +524,7 @@ func GenerateRuVDSConfig() ([]byte, error) {
 	database.DB.Where("enabled = ?", true).Order("sort_order").Find(&inbounds)
 
 	singboxInbounds := []any{}
+	inboundTags := []string{}
 	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
 		if !servedBySingBox(ib) {
@@ -532,6 +532,7 @@ func GenerateRuVDSConfig() ([]byte, error) {
 		}
 		group := buildInboundGroup(ib, users)
 		singboxInbounds = append(singboxInbounds, group...)
+		inboundTags = append(inboundTags, ib.Tag)
 		if ib.ExitOutbound != "" {
 			perInboundRules = append(perInboundRules, RouteRule{
 				Inbound:  []string{ib.Tag},
@@ -549,7 +550,8 @@ func GenerateRuVDSConfig() ([]byte, error) {
 			Timestamp: true,
 			Output:    "/etc/sing-box/access.log",
 		},
-		Inbounds: singboxInbounds,
+		Experimental: statsExperimental(inboundTags, users),
+		Inbounds:     singboxInbounds,
 		Outbounds: []any{
 			wgOutbound,
 			OutboundConfig{Type: "direct", Tag: "direct", DomainStrategy: "prefer_ipv4"},
@@ -888,91 +890,8 @@ func ValidateRealitySNI(domain string) bool {
 	return err == nil
 }
 
-// --- API Traffic Logic (gRPC V2Ray) ---
-
-var previousStats = make(map[string]int64)
-
-func UpdateTrafficViaAPI() error {
-	conn, err := grpc.Dial(ApiAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil
-	}
-	defer conn.Close()
-
-	client := command.NewStatsServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	// Запрашиваем всё, но фильтруем в коде
-	resp, err := client.QueryStats(ctx, &command.QueryStatsRequest{
-		Pattern: "",
-		Reset_:  false,
-	})
-	if err != nil {
-		return err
-	}
-
-	userTrafficDelta := make(map[string]int64)
-	currentStats := make(map[string]int64)
-
-	for _, stat := range resp.Stat {
-		parts := strings.Split(stat.Name, ">>>")
-		if len(parts) < 4 {
-			continue
-		}
-
-		// Фильтр: обрабатываем только статистику пользователей
-		if parts[0] != "user" {
-			continue
-		}
-
-		username := parts[1]
-		direction := parts[3]
-
-		key := fmt.Sprintf("%s_%s", username, direction)
-		currentStats[key] = stat.Value
-
-		prev := previousStats[key]
-		delta := stat.Value - prev
-
-		if delta < 0 {
-			delta = stat.Value
-		}
-
-		if delta > 0 {
-			userTrafficDelta[username] += delta
-		}
-	}
-
-	for k, v := range currentStats {
-		previousStats[k] = v
-	}
-
-	for username, newBytes := range userTrafficDelta {
-		if newBytes > 0 {
-			err := database.DB.Transaction(func(tx *gorm.DB) error {
-				var count int64
-				tx.Model(&database.User{}).Where("username = ?", username).Count(&count)
-				if count == 0 {
-					return nil
-				}
-
-				return tx.Model(&database.User{}).
-					Where("username = ?", username).
-					Update("traffic_used", gorm.Expr("traffic_used + ?", newBytes)).Error
-			})
-
-			if err != nil {
-				log.Printf("DB Error for %s: %v", username, err)
-			} else {
-				checkLimits(username)
-			}
-		}
-	}
-
-	return nil
-}
-
+// checkLimits — перевод в expired при исчерпании лимита (за всё время).
+// Сбор трафика — service/traffic.go.
 func checkLimits(username string) {
 	var user database.User
 	if err := database.DB.Where("username = ?", username).First(&user).Error; err == nil {

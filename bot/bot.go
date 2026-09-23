@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -388,6 +389,25 @@ func Start(token string, adminID int64) {
 		return c.Send(helpMsg, tele.ModeMarkdown)
 	})
 
+	// /traffic — учёт трафика (только админ):
+	//   /traffic            — топ пользователей за текущий месяц
+	//   /traffic <username> — помесячная история пользователя
+	//   /traffic inbounds   — трафик по подключениям за 7 дней
+	b.Handle("/traffic", func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
+		arg := strings.TrimSpace(strings.TrimPrefix(c.Text(), "/traffic"))
+		switch {
+		case arg == "":
+			return c.Send(trafficTopMsg())
+		case arg == "inbounds":
+			return c.Send(trafficInboundsMsg())
+		default:
+			return c.Send(trafficUserMsg(arg))
+		}
+	})
+
 	b.Handle("/broadcast", func(c tele.Context) error {
 		if c.Sender().ID != AdminID {
 			return c.Send("⛔ Только администратор может отправлять рассылку.")
@@ -414,16 +434,8 @@ func Start(token string, adminID int64) {
 		return c.Send(fmt.Sprintf("📨 Рассылка завершена.\n✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed))
 	})
 
-	// Фоновая задача
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		for range ticker.C {
-			err := service.UpdateTrafficViaAPI()
-			if err != nil {
-				log.Println("Traffic update error:", err)
-			}
-		}
-	}()
+	// Фоновый учёт трафика: Hetzner каждые 10 с, RuVDS каждые 60 с.
+	service.StartTrafficPolling()
 
 	b.Start()
 }
@@ -505,6 +517,7 @@ func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
 	user := getUser(tgID)
 	used := formatBytes(user.TrafficUsed)
 	limit := formatBytes(user.TrafficLimit)
+	month := service.UserMonthTraffic(user.ID, service.CurrentMonth())
 
 	limitStr := limit
 	if user.TrafficLimit == 0 {
@@ -520,9 +533,10 @@ func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
 		"📊 **Статус сервера**\n"+
 			"👥 Активных пользователей: **%d**\n\n"+
 			"👤 **Ваш профиль:** `%s`\n"+
-			"📉 Потрачено: **%s**\n"+
+			"📅 За месяц: **%s**\n"+
+			"📉 Всего: **%s**\n"+
 			"📈 Лимит: **%s**",
-		totalUsers, user.Username, used, limitStr,
+		totalUsers, user.Username, formatBytes(month.Up+month.Down), used, limitStr,
 	)
 
 	rm := &tele.ReplyMarkup{}
@@ -664,4 +678,79 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// --- /traffic (админ). Обычный текст без Markdown: в именах есть "_". ---
+
+func trafficTopMsg() string {
+	month := service.CurrentMonth()
+	rows := service.TopUsersForMonth(month, 20)
+	if len(rows) == 0 {
+		return fmt.Sprintf("📊 Трафик за %s: данных пока нет.", month)
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "📊 Трафик за %s (месяц / всего):\n\n", month)
+	for i, r := range rows {
+		fmt.Fprintf(&sb, "%d. %s — %s / %s\n", i+1, r.Username, formatBytes(r.Up+r.Down), formatBytes(r.Total))
+	}
+	sb.WriteString("\n/traffic <username> — история, /traffic inbounds — по подключениям")
+	return sb.String()
+}
+
+func trafficUserMsg(username string) string {
+	var user database.User
+	if err := database.DB.Where("username = ?", username).First(&user).Error; err != nil {
+		return "❌ Пользователь не найден: " + username
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "👤 %s\nВсего: %s", user.Username, formatBytes(user.TrafficUsed))
+	if user.TrafficLimit > 0 {
+		fmt.Fprintf(&sb, " из %s", formatBytes(user.TrafficLimit))
+	}
+	sb.WriteString("\n\n")
+	hist := service.UserMonthlyHistory(user.ID, 6)
+	if len(hist) == 0 {
+		sb.WriteString("Помесячной истории пока нет.")
+	}
+	for _, m := range hist {
+		fmt.Fprintf(&sb, "%s: %s (↑%s ↓%s)\n", m.Month, formatBytes(m.Up+m.Down), formatBytes(m.Up), formatBytes(m.Down))
+	}
+	return sb.String()
+}
+
+func trafficInboundsMsg() string {
+	now := time.Now()
+	from := now.AddDate(0, 0, -6).Format("2006-01-02")
+	to := now.AddDate(0, 0, 1).Format("2006-01-02") // с запасом на разницу UTC/MSK
+	rows := service.InboundTrafficRange(from, to)
+	if len(rows) == 0 {
+		return "📡 Трафика по подключениям за 7 дней пока нет."
+	}
+	type key struct{ tag, server string }
+	total := map[key]int64{}
+	byDay := map[string]int64{}
+	var days []string
+	for _, r := range rows {
+		total[key{r.Tag, r.Server}] += r.Up + r.Down
+		if _, ok := byDay[r.Day]; !ok {
+			days = append(days, r.Day)
+		}
+		byDay[r.Day] += r.Up + r.Down
+	}
+	keys := make([]key, 0, len(total))
+	for k := range total {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return total[keys[i]] > total[keys[j]] })
+
+	var sb strings.Builder
+	sb.WriteString("📡 Подключения за 7 дней:\n\n")
+	for _, k := range keys {
+		fmt.Fprintf(&sb, "%s (%s) — %s\n", k.tag, k.server, formatBytes(total[k]))
+	}
+	sb.WriteString("\nПо дням:\n")
+	for _, d := range days {
+		fmt.Fprintf(&sb, "%s — %s\n", d, formatBytes(byDay[d]))
+	}
+	return sb.String()
 }

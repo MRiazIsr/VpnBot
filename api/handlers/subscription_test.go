@@ -23,3 +23,15 @@ func TestInSubscription(t *testing.T) {
 		}
 	}
 }
+
+func TestSubscriptionUserinfo(t *testing.T) {
+	u := database.User{TrafficUsed: 1000, TrafficLimit: 5000}
+	if got := subscriptionUserinfo(u, 300); got != "upload=300; download=700; total=5000" {
+		t.Fatalf("got %q", got)
+	}
+	// Учтённый upload больше traffic_used (старый счётчик сбрасывали вручную) —
+	// download не уходит в минус, сумма не превышает upload.
+	if got := subscriptionUserinfo(database.User{TrafficUsed: 100}, 300); got != "upload=300; download=0; total=0" {
+		t.Fatalf("got %q", got)
+	}
+}
