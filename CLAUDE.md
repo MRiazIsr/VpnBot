@@ -116,7 +116,7 @@ Legacy iptables DNAT/MASQUERADE in `service/portforward.go` / `portforward_nft.g
 
 Unit tests in `service/vpn_test.go` cover config generation (routing, multiplex, shadowtls-group) and subscription link generation. `service/health/health_test.go` covers health monitoring. Run all with `go test ./... -v`.
 
-Manual verification remains critical for changes affecting sing-box behavior — after `POST /api/reload`, `journalctl -u sing-box -n 20` and `sing-box check -c /etc/sing-box/config.json` should be inspected. The `POST /api/reload` returns success even if sing-box rejects the config (SIGHUP is async).
+Manual verification remains critical for changes affecting sing-box behavior — after `POST /api/reload`, `journalctl -u sing-box -n 20` and `sing-box check -c /etc/sing-box/config.json` should be inspected. Generated sing-box configs (Hetzner and RuVDS) are written to `config.json.new` and validated with `sing-box check` before replacing the live file; a rejected config leaves the running one untouched and `POST /api/reload` returns 500 with the checker output. Runtime errors after a valid reload (SIGHUP is async) are still only visible in journalctl. Protocols served by Xray, not sing-box (`mask`, `xdns`), must be excluded via `servedBySingBox()`.
 
 ## API Structure
 
