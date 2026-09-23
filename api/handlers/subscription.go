@@ -11,6 +11,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// inSubscription — попадает ли инбаунд в подписки /sub и /sub-ruvds.
+// Не попадают (но остаются в боте):
+//   - mask и xdns: ссылку с fm / JSON-конфиг понимают только Xray-клиенты
+//     (v2rayNG/Happ/Streisand), у части базы Hiddify — строку в подписке они
+//     не откроют; раздаются кнопкой в боте;
+//   - инбаунды с выходом direct (RU*): российский IP, Instagram/WhatsApp/
+//     Telegram через них не работают, а пользователь видит «VPN сломан».
+func inSubscription(ib database.InboundConfig) bool {
+	if ib.Protocol == "mask" || ib.Protocol == "xdns" {
+		return false
+	}
+	return ib.ExitOutbound != "direct"
+}
+
 func GetSubscription() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.Param("token")
@@ -37,9 +51,7 @@ func GetSubscription() gin.HandlerFunc {
 
 		links := []string{}
 		for _, ib := range inbounds {
-			// Xray-сайдкар стоит только на RuVDS: Hetzner-ссылка на маску не сработает.
-			// xdns раздаётся только кнопкой в боте, не через общую подписку.
-			if ib.Protocol == "mask" || ib.Protocol == "xdns" {
+			if !inSubscription(ib) {
 				continue
 			}
 			if link := service.GenerateLinkForInbound(ib, user, serverIP); link != "" {
@@ -85,11 +97,7 @@ func GetSubscriptionRuVDS() gin.HandlerFunc {
 
 		links := []string{}
 		for _, ib := range inbounds {
-			// Маску не отдаём в общей подписке: ссылку с fm понимают только
-			// Xray-клиенты (v2rayNG/Happ/Streisand), а у части базы Hiddify —
-			// строку в подписке они не откроют. Раздаётся только кнопкой в боте.
-			// xdns — по той же причине.
-			if ib.Protocol == "mask" || ib.Protocol == "xdns" {
+			if !inSubscription(ib) {
 				continue
 			}
 			// Используем RuVDS IP вместо ServerAddress/SERVER_IP — клиент пойдёт на RuVDS.
