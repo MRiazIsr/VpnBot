@@ -210,3 +210,11 @@ func TestGenerateRuVDSConfig_HasStatsAPI(t *testing.T) {
 		t.Fatalf("inbounds must list sing-box inbounds only, got %v", s.Stats.Inbounds)
 	}
 }
+
+// Пустые выборки уходят в API как [], а не null.
+func TestTrafficAggregates_EmptyIsNotNil(t *testing.T) {
+	newTrafficTestDB(t)
+	if UserMonthlyHistory(42, 6) == nil || TopUsersForMonth("2026-01", 10) == nil || InboundTrafficRange("2026-01-01", "2026-01-02") == nil {
+		t.Fatal("empty aggregates must be non-nil slices")
+	}
+}

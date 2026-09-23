@@ -276,7 +276,7 @@ type MonthTraffic struct {
 
 // UserMonthlyHistory — последние limit месяцев, новые первыми.
 func UserMonthlyHistory(userID uint, limit int) []MonthTraffic {
-	var rows []MonthTraffic
+	rows := []MonthTraffic{}
 	database.DB.Model(&database.TrafficDaily{}).
 		Select("substr(day,1,7) AS month, SUM(upload) AS up, SUM(download) AS down").
 		Where("user_id = ?", userID).Group("month").Order("month DESC").Limit(limit).Scan(&rows)
@@ -294,7 +294,7 @@ type UserMonthRow struct {
 
 // TopUsersForMonth — пользователи с трафиком за месяц, по убыванию.
 func TopUsersForMonth(month string, limit int) []UserMonthRow {
-	var rows []UserMonthRow
+	rows := []UserMonthRow{}
 	database.DB.Table("traffic_dailies AS t").
 		Select("t.user_id, u.username, SUM(t.upload) AS up, SUM(t.download) AS down, u.traffic_used AS total").
 		Joins("JOIN users u ON u.id = t.user_id").
@@ -315,7 +315,7 @@ type InboundDayRow struct {
 
 // InboundTrafficRange — по дням за [from, to] включительно ("2026-09-01").
 func InboundTrafficRange(from, to string) []InboundDayRow {
-	var rows []InboundDayRow
+	rows := []InboundDayRow{}
 	database.DB.Model(&database.InboundTrafficDaily{}).
 		Select("day, tag, server, upload AS up, download AS down").
 		Where("day >= ? AND day <= ?", from, to).Order("day, tag, server").Scan(&rows)
