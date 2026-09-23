@@ -133,7 +133,7 @@ func TestBuildSingBoxConfig_PerInboundRule(t *testing.T) {
 		Enabled:           true,
 		ExitOutbound:      "direct",
 		RealityPrivateKey: "x", RealityPublicKey: "y",
-		RealityShortIDs:   database.JSONStringArray{"abcd"},
+		RealityShortIDs: database.JSONStringArray{"abcd"},
 	}
 	cfg := buildSingBoxConfig([]database.InboundConfig{ib}, nil, nil, "")
 	if len(cfg.Route.Rules) < 2 {
@@ -385,5 +385,37 @@ func TestBuildSingBoxConfig_MaskNotEmitted(t *testing.T) {
 	}
 	if !strings.Contains(got, `"listen_port":2060`) {
 		t.Fatalf("inner inbound must stay, got: %s", got)
+	}
+}
+
+func TestBuildInboundGroup_XDNSReturnsNothing(t *testing.T) {
+	ib := database.InboundConfig{Tag: "XDNS", Protocol: "xdns", ListenPort: 53, XDNSDomain: "t.example.net"}
+	group := buildInboundGroup(ib, nil)
+	if len(group) != 0 {
+		t.Fatalf("xdns inbound must not produce sing-box inbounds, got %d", len(group))
+	}
+}
+
+// Регрессия 2026-09: xdns утёк в sing-box конфиг → "unknown inbound type: xdns",
+// sing-box на RuVDS ушёл в рестарт-луп, все клиентские инбаунды легли.
+func TestBuildSingBoxConfig_XDNSNotEmitted(t *testing.T) {
+	vless := database.InboundConfig{Tag: "DE", Protocol: "vless", ListenPort: 443, TLSType: "reality"}
+	xdns := database.InboundConfig{Tag: "XDNS", Protocol: "xdns", ListenPort: 53, XDNSDomain: "t.example.net"}
+	cfg := buildSingBoxConfig([]database.InboundConfig{vless, xdns}, nil, nil, "")
+	b, _ := json.Marshal(cfg)
+	got := string(b)
+	if strings.Contains(got, `"xdns"`) || strings.Contains(got, `"XDNS"`) {
+		t.Fatalf("xdns inbound leaked into sing-box config: %s", got)
+	}
+	if !strings.Contains(got, `"listen_port":443`) {
+		t.Fatalf("vless inbound must stay, got: %s", got)
+	}
+}
+
+func TestServedBySingBox(t *testing.T) {
+	for proto, want := range map[string]bool{"vless": true, "hysteria2": true, "shadowtls": true, "mask": false, "xdns": false} {
+		if got := servedBySingBox(database.InboundConfig{Protocol: proto}); got != want {
+			t.Errorf("servedBySingBox(%q) = %v, want %v", proto, got, want)
+		}
 	}
 }

@@ -187,12 +187,19 @@ func buildUserNames(users []database.User) []string {
 	return result
 }
 
+// servedBySingBox — false для протоколов, которые обслуживает Xray, а не
+// sing-box: mask (сайдкар на RuVDS, service/xray.go) и xdns (xray-xdns на
+// Hetzner, service/xrayxdns.go). Такой инбаунд в sing-box конфиге = FATAL
+// "unknown inbound type" и неподнимающийся sing-box.
+func servedBySingBox(ib database.InboundConfig) bool {
+	return ib.Protocol != "mask" && ib.Protocol != "xdns"
+}
+
 // buildInboundGroup возвращает 1+ sing-box inbound-объектов для одной DB-записи.
 // Для vless/hysteria2 — 1 элемент (типизированный SingboxInbound).
 // Для shadowtls — 2 элемента (shadowtls + inner shadowsocks).
 func buildInboundGroup(ib database.InboundConfig, users []database.User) []any {
-	// mask обслуживает Xray (service/xray.go), sing-box о нём не знает.
-	if ib.Protocol == "mask" {
+	if !servedBySingBox(ib) {
 		return []any{}
 	}
 	if ib.Protocol == "shadowtls" {
@@ -342,7 +349,7 @@ func buildSingBoxConfig(inbounds []database.InboundConfig, users []database.User
 	inboundTags := []string{}
 	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
-		if ib.Protocol == "mask" {
+		if !servedBySingBox(ib) {
 			continue
 		}
 		group := buildInboundGroup(ib, users)
@@ -488,7 +495,7 @@ func GenerateRuVDSConfig() ([]byte, error) {
 	singboxInbounds := []any{}
 	perInboundRules := []RouteRule{}
 	for _, ib := range inbounds {
-		if ib.Protocol == "mask" {
+		if !servedBySingBox(ib) {
 			continue
 		}
 		group := buildInboundGroup(ib, users)
