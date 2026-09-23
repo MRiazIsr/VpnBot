@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -429,30 +430,61 @@ func GenerateAndReload() error {
 
 	file, _ := json.MarshalIndent(cfg, "", "  ")
 
-	hetznerErr := os.WriteFile(ConfigPath, file, 0644)
-	if hetznerErr != nil {
-		log.Println("Error writing Hetzner config:", hetznerErr)
-		fmt.Println(string(file))
-	} else {
-		if rerr := ReloadService(); rerr != nil {
-			log.Println("Hetzner sing-box reload error:", rerr)
-		}
+	// Ошибки копятся и возвращаются вместе: POST /api/reload должен показать
+	// отказ любого из серверов, а не рапортовать успех (сентябрь 2026:
+	// xdns-инбаунд 9 дней молча ронял reload, а RuVDS лежал в рестарт-лупе).
+	var errs []error
+	if err := writeCheckedConfig(ConfigPath, file, checkSingboxConfig); err != nil {
+		log.Println("Hetzner sing-box config rejected:", err)
+		errs = append(errs, fmt.Errorf("Hetzner: %w", err))
+	} else if err := ReloadService(); err != nil {
+		log.Println("Hetzner sing-box reload error:", err)
+		errs = append(errs, fmt.Errorf("Hetzner reload: %w", err))
 	}
 
 	// Зеркало конфига на RuVDS (если WG включён)
 	if IsRuVDSEnabled() {
-		if rerr := GenerateAndReloadRuVDS(); rerr != nil {
-			log.Println("RuVDS sing-box reload error:", rerr)
+		if err := GenerateAndReloadRuVDS(); err != nil {
+			log.Println("RuVDS sing-box reload error:", err)
+			errs = append(errs, fmt.Errorf("RuVDS: %w", err))
 		}
 	}
 
-	// XDNS-канал на Hetzner (локальный Xray). Ошибка не рушит основной reload.
+	// XDNS-канал на Hetzner (локальный Xray). Ошибка не мешает остальным шагам.
 	if HasXDNSInbounds() {
-		if xerr := GenerateAndReloadXDNS(); xerr != nil {
-			log.Println("XDNS reload error:", xerr)
+		if err := GenerateAndReloadXDNS(); err != nil {
+			log.Println("XDNS reload error:", err)
+			errs = append(errs, fmt.Errorf("XDNS: %w", err))
 		}
 	}
-	return hetznerErr
+	return errors.Join(errs...)
+}
+
+// writeCheckedConfig пишет конфиг во временный <path>.new, прогоняет check и
+// только при успехе подменяет рабочий файл. Отвергнутый конфиг не попадает на
+// диск под боевым именем — иначе он убьёт sing-box на ближайшем рестарте.
+func writeCheckedConfig(path string, data []byte, check func(path string) error) error {
+	newPath := path + ".new"
+	if err := os.WriteFile(newPath, data, 0644); err != nil {
+		return fmt.Errorf("запись %s: %w", newPath, err)
+	}
+	if err := check(newPath); err != nil {
+		os.Remove(newPath)
+		return fmt.Errorf("sing-box check отверг конфиг: %w", err)
+	}
+	if err := os.Rename(newPath, path); err != nil {
+		return fmt.Errorf("замена %s: %w", path, err)
+	}
+	return nil
+}
+
+// checkSingboxConfig — `sing-box check` локального бинаря.
+func checkSingboxConfig(path string) error {
+	out, err := exec.Command("sing-box", "check", "--disable-color", "-c", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // GenerateAndReloadXDNS — перегенерация + деплой config.json XDNS-канала

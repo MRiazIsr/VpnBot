@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -417,5 +418,38 @@ func TestServedBySingBox(t *testing.T) {
 		if got := servedBySingBox(database.InboundConfig{Protocol: proto}); got != want {
 			t.Errorf("servedBySingBox(%q) = %v, want %v", proto, got, want)
 		}
+	}
+}
+
+func TestWriteCheckedConfig_RejectedKeepsOldConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, []byte("old"), 0644)
+	err := writeCheckedConfig(path, []byte("bad"), func(p string) error {
+		return fmt.Errorf("unknown inbound type: xdns")
+	})
+	if err == nil || !strings.Contains(err.Error(), "xdns") {
+		t.Fatalf("expected checker error, got %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "old" {
+		t.Fatalf("working config must stay untouched, got %q", got)
+	}
+	if _, err := os.Stat(path + ".new"); !os.IsNotExist(err) {
+		t.Fatalf("rejected .new must be removed")
+	}
+}
+
+func TestWriteCheckedConfig_AcceptedReplaces(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, []byte("old"), 0644)
+	var checked string
+	err := writeCheckedConfig(path, []byte("new"), func(p string) error { checked = p; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked != path+".new" {
+		t.Fatalf("checker must see the candidate file, got %q", checked)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "new" {
+		t.Fatalf("config must be replaced, got %q", got)
 	}
 }

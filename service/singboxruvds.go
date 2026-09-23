@@ -93,6 +93,8 @@ WantedBy=multi-user.target
 }
 
 // DeploySingboxConfigRuVDS — записывает /etc/sing-box/config.json на RuVDS и reload.
+// Конфиг сначала пишется в config.json.new и прогоняется `sing-box check`;
+// отвергнутый конфиг рабочий файл не заменяет (см. writeCheckedConfig).
 func DeploySingboxConfigRuVDS(cfgJSON []byte) error {
 	client, err := sshConnect()
 	if err != nil {
@@ -100,10 +102,18 @@ func DeploySingboxConfigRuVDS(cfgJSON []byte) error {
 	}
 	defer client.Close()
 
+	newPath := SingboxRuVDSConfigPath + ".new"
 	cmd := fmt.Sprintf("mkdir -p /etc/sing-box && cat > %s << 'CFGEOF'\n%s\nCFGEOF",
-		SingboxRuVDSConfigPath, string(cfgJSON))
+		newPath, string(cfgJSON))
 	if out, err := runSSH(client, cmd); err != nil {
-		return fmt.Errorf("запись config.json: %w: %s", err, out)
+		return fmt.Errorf("запись config.json.new: %w: %s", err, out)
+	}
+	if out, err := runSSH(client, fmt.Sprintf("%s check --disable-color -c %s 2>&1", SingboxRuVDSBinaryPath, newPath)); err != nil {
+		runSSH(client, fmt.Sprintf("rm -f %s", newPath))
+		return fmt.Errorf("sing-box check отверг конфиг: %s", strings.TrimSpace(out))
+	}
+	if out, err := runSSH(client, fmt.Sprintf("mv -f %s %s", newPath, SingboxRuVDSConfigPath)); err != nil {
+		return fmt.Errorf("замена config.json: %w: %s", err, out)
 	}
 
 	out, _ := runSSH(client, fmt.Sprintf("systemctl is-active --quiet %s && echo active",
