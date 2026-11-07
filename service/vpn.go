@@ -38,9 +38,23 @@ type RouteConfig struct {
 
 type RouteRule struct {
 	Inbound      []string `json:"inbound,omitempty"`
+	Protocol     []string `json:"protocol,omitempty"`
 	DomainSuffix []string `json:"domain_suffix,omitempty"`
 	IPCIDR       []string `json:"ip_cidr,omitempty"`
-	Outbound     string   `json:"outbound"`
+	// Action пусто = route (sing-box ≥1.11); sniff/reject идут без Outbound.
+	Action   string `json:"action,omitempty"`
+	Outbound string `json:"outbound,omitempty"`
+}
+
+// torrentBlockRules — запрет BitTorrent (TCP, uTP, UDP-трекеры). Ставится в
+// начало route.rules: sniff определяет протокол по первым байтам, reject
+// рвёт соединение раньше, чем per-inbound правило выпустит его в direct.
+// Иначе абузы за раздачи прилетают на IP наших серверов.
+func torrentBlockRules() []RouteRule {
+	return []RouteRule{
+		{Action: "sniff"},
+		{Protocol: []string{"bittorrent"}, Action: "reject"},
+	}
 }
 
 type ExperimentalConfig struct {
@@ -394,7 +408,8 @@ func buildSingBoxConfig(inbounds []database.InboundConfig, users []database.User
 		},
 		Outbound: "block",
 	}
-	rules := append(perInboundRules, bogonRule)
+	rules := append(torrentBlockRules(), perInboundRules...)
+	rules = append(rules, bogonRule)
 
 	return SingBoxConfig{
 		Log: LogConfig{
@@ -558,7 +573,7 @@ func GenerateRuVDSConfig() ([]byte, error) {
 			OutboundConfig{Type: "block", Tag: "block"},
 		},
 		Route: &RouteConfig{
-			Rules: perInboundRules,
+			Rules: append(torrentBlockRules(), perInboundRules...),
 			// Не "wg-out". Туннель wg0 RuVDS↔Hetzner не передал ни одного
 			// пакета за всё время существования: 02.08.2026 счётчик правила
 			// ufw на udp/51820 показывал packets 0, `wg show` — ноль

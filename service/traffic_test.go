@@ -184,6 +184,7 @@ func TestGenerateRuVDSConfig_HasStatsAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertTorrentBlockFirst(t, b)
 	var cfg struct {
 		Experimental struct {
 			V2RayAPI struct {

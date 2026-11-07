@@ -137,12 +137,13 @@ func TestBuildSingBoxConfig_PerInboundRule(t *testing.T) {
 		RealityShortIDs: database.JSONStringArray{"abcd"},
 	}
 	cfg := buildSingBoxConfig([]database.InboundConfig{ib}, nil, nil, "")
-	if len(cfg.Route.Rules) < 2 {
-		t.Fatalf("expected >=2 rules, got %d", len(cfg.Route.Rules))
+	n := len(torrentBlockRules())
+	if len(cfg.Route.Rules) < n+2 {
+		t.Fatalf("expected >=%d rules, got %d", n+2, len(cfg.Route.Rules))
 	}
-	first := cfg.Route.Rules[0]
+	first := cfg.Route.Rules[n]
 	if len(first.Inbound) != 1 || first.Inbound[0] != "vless-direct-xhttp" || first.Outbound != "direct" {
-		t.Fatalf("expected first rule to route direct-xhttp→direct, got %+v", first)
+		t.Fatalf("expected first rule after torrent block to route direct-xhttp→direct, got %+v", first)
 	}
 	found := false
 	for _, r := range cfg.Route.Rules {
@@ -154,6 +155,48 @@ func TestBuildSingBoxConfig_PerInboundRule(t *testing.T) {
 	if !found {
 		t.Fatal("bogon block rule missing")
 	}
+}
+
+// assertTorrentBlockFirst — sniff и reject bittorrent обязаны стоять раньше
+// любых правил с outbound: action route терминальный, и per-inbound правило,
+// стоящее выше, увело бы торрент в direct/wg-out мимо блокировки.
+func assertTorrentBlockFirst(t *testing.T, raw []byte) {
+	t.Helper()
+	var cfg struct {
+		Route struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	rules := cfg.Route.Rules
+	if len(rules) < 2 {
+		t.Fatalf("expected torrent block rules, got %s", raw)
+	}
+	if rules[0]["action"] != "sniff" || len(rules[0]) != 1 {
+		t.Fatalf("rule[0] must be bare {action:sniff}, got %v", rules[0])
+	}
+	proto, _ := rules[1]["protocol"].([]any)
+	if rules[1]["action"] != "reject" || len(proto) != 1 || proto[0] != "bittorrent" {
+		t.Fatalf("rule[1] must reject bittorrent, got %v", rules[1])
+	}
+	if _, ok := rules[1]["outbound"]; ok {
+		t.Fatalf("reject rule must not carry outbound, got %v", rules[1])
+	}
+}
+
+func TestBuildSingBoxConfig_BlocksBitTorrent(t *testing.T) {
+	ib := database.InboundConfig{
+		Tag: "RU-TCP", Protocol: "vless", ListenPort: 2060, TLSType: "reality",
+		UserType: "new", Enabled: true, ExitOutbound: "direct",
+	}
+	cfg := buildSingBoxConfig([]database.InboundConfig{ib}, nil, nil, "")
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTorrentBlockFirst(t, b)
 }
 
 func TestBuildSingBoxConfig_DirectExit_EndToEnd(t *testing.T) {
