@@ -7,12 +7,15 @@ import (
 	"vpnbot/api/router"
 	"vpnbot/bot"
 	"vpnbot/database"
+	"vpnbot/logredact"
 	"vpnbot/service"
 
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	log.SetOutput(logredact.NewWriter(os.Stderr, os.Getenv("BOT_TOKEN")))
+
 	// Адреса серверов задаются только окружением — в коде дефолтов нет.
 	if os.Getenv("SERVER_IP") == "" {
 		log.Fatal("SERVER_IP is required (see .env.example)")
