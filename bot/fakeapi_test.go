@@ -121,6 +121,8 @@ func parseParams(r *http.Request) map[string]any {
 }
 
 // on задаёт свой ответ на метод; h вызывается без мьютекса fakeAPI.
+// Если h блокируется, его надо освобождать в t.Cleanup, зарегистрированном ПОСЛЕ
+// newFakeAPI (cleanup идут LIFO, а httptest.Server.Close ждёт текущие обработчики).
 func (f *fakeAPI) on(method string, h func(p map[string]any) (int, string)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -214,7 +216,12 @@ func newTestDB(t *testing.T) {
 	}
 	old := database.DB
 	database.DB = db
-	t.Cleanup(func() { database.DB = old })
+	t.Cleanup(func() {
+		database.DB = old
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	})
 }
 
 // eventually ждёт выполнения условия до 2 секунд.

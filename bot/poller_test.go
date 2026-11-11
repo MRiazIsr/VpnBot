@@ -53,8 +53,13 @@ func TestPoller_DeliversUpdatesAndAdvancesOffset(t *testing.T) {
 	f := newFakeAPI(t)
 	f.script("getUpdates", `{"ok":true,"result":[{"update_id":7,"message":{"message_id":1,"text":"hi","chat":{"id":5}}}]}`)
 	dest, _, _ := runPoller(t, f)
-	if u := <-dest; u.ID != 7 {
-		t.Fatalf("id=%d", u.ID)
+	select {
+	case u := <-dest:
+		if u.ID != 7 {
+			t.Fatalf("id=%d", u.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("обновление не доставлено")
 	}
 	eventually(t, func() bool { p := f.params("getUpdates"); return len(p) >= 2 && fmt.Sprint(p[1]["offset"]) == "8" })
 }
@@ -101,8 +106,9 @@ func TestPoller_StopsDuringPause(t *testing.T) {
 	p := newPoller(time.Second)
 	p.logf = func(string, ...any) {}
 	p.sleep = func(time.Duration, <-chan struct{}) bool { return false }
+	b := newTestBot(t, f)
 	done := make(chan struct{})
-	go func() { p.Poll(newTestBot(t, f), make(chan tele.Update), make(chan struct{})); close(done) }()
+	go func() { p.Poll(b, make(chan tele.Update), make(chan struct{})); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -138,5 +144,21 @@ func TestPoller_RepeatsAreLoggedOncePerMinute(t *testing.T) {
 	p.Poll(newTestBot(t, f), make(chan tele.Update), make(chan struct{}))
 	if len(lines) != 2 || !strings.Contains(lines[1], "polling still failing (") {
 		t.Fatalf("lines=%q", lines)
+	}
+}
+
+func TestPoller_DefaultSleepStopsPromptly(t *testing.T) {
+	p := newPoller(time.Second)
+	stop := make(chan struct{})
+	close(stop)
+	res := make(chan bool, 1)
+	go func() { res <- p.sleep(time.Hour, stop) }()
+	select {
+	case ok := <-res:
+		if ok {
+			t.Fatal("sleep вернул true при закрытом stop")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("sleep не прервался по stop")
 	}
 }

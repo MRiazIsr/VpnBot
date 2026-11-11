@@ -109,16 +109,21 @@ func fetchUpdates(b *tele.Bot, offset int, timeout time.Duration) ([]tele.Update
 		Result []tele.Update `json:"result"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		snippet := strings.TrimSpace(string(data))
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
-		return nil, fmt.Errorf("unparsable getUpdates answer: %v (body: %q)", err, snippet)
+		return nil, fmt.Errorf("unparsable getUpdates answer: %v (body: %q)", err, bodySnippet(data))
 	}
 	if !resp.Ok {
-		return nil, fmt.Errorf("getUpdates not ok: %q", string(data))
+		return nil, fmt.Errorf("getUpdates not ok: %q", bodySnippet(data))
 	}
 	return resp.Result, nil
+}
+
+// bodySnippet обрезает тело ответа до 200 байт для сообщения об ошибке.
+func bodySnippet(data []byte) string {
+	s := strings.TrimSpace(string(data))
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	return s
 }
 
 func isConflict(err error) bool {
