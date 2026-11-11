@@ -37,12 +37,14 @@ func broadcastRecipients() []int64 {
 func sendToAll(m messenger, ids []int64, text string, sleep func(time.Duration)) (sent, failed int) {
 	for _, id := range ids {
 		ok := false
+		var lastErr error
 		for attempt := 1; attempt <= broadcastAttempts; attempt++ {
 			_, err := m.Send(&tele.User{ID: id}, text)
 			if err == nil {
 				ok = true
 				break
 			}
+			lastErr = err
 			var flood tele.FloodError
 			if !errors.As(err, &flood) || attempt == broadcastAttempts {
 				break
@@ -53,6 +55,7 @@ func sendToAll(m messenger, ids []int64, text string, sleep func(time.Duration))
 			sent++
 		} else {
 			failed++
+			log.Printf("bot: broadcast to %d failed: %v", id, lastErr)
 		}
 		sleep(broadcastPause)
 	}

@@ -88,6 +88,7 @@ func TestSendToAll_RetriesAfterFlood(t *testing.T) {
 }
 
 func TestSendToAll_GivesUpAfterThreeFloods(t *testing.T) {
+	captureLog(t)
 	f := newFakeAPI(t)
 	b := newTestBot(t, f)
 	tries := 0
@@ -105,6 +106,7 @@ func TestSendToAll_GivesUpAfterThreeFloods(t *testing.T) {
 }
 
 func TestSendToAll_BlockedUserDoesNotStopOthers(t *testing.T) {
+	logs := captureLog(t)
 	f := newFakeAPI(t)
 	b := newTestBot(t, f)
 	f.on("sendMessage", func(p map[string]any) (int, string) {
@@ -117,6 +119,9 @@ func TestSendToAll_BlockedUserDoesNotStopOthers(t *testing.T) {
 	if sent != 2 || failed != 1 {
 		t.Fatalf("sent=%d failed=%d", sent, failed)
 	}
+	if !strings.Contains(logs.String(), "bot: broadcast to 1 failed") {
+		t.Fatalf("в логе нет следа ошибки: %q", logs.String())
+	}
 }
 
 func TestBroadcastCommand_RunsInBackgroundAndRefusesSecond(t *testing.T) {
@@ -124,6 +129,7 @@ func TestBroadcastCommand_RunsInBackgroundAndRefusesSecond(t *testing.T) {
 	setAdmin(t, 1)
 	addUser(t, 11, "active")
 	addUser(t, 12, "active")
+	addUser(t, 13, "banned")
 	f := newFakeAPI(t)
 	release := holdRecipients(t, f)
 	b := newTestBot(t, f)
@@ -136,6 +142,29 @@ func TestBroadcastCommand_RunsInBackgroundAndRefusesSecond(t *testing.T) {
 	}
 	release()
 	eventually(t, func() bool { g := f.texts(1); return len(g) == 3 && strings.Contains(g[2], "Отправлено: 2") })
+	if n := len(f.texts(13)); n != 0 {
+		t.Fatalf("заблокированный получил %d сообщений", n)
+	}
+}
+
+func TestBroadcaster_FlagReleasedAfterRun(t *testing.T) {
+	br := &broadcaster{}
+	if !br.start(func() {}) {
+		t.Fatal("первый запуск отклонён")
+	}
+	eventually(t, func() bool { return br.start(func() {}) })
+}
+
+func TestBroadcaster_FlagReleasedAfterPanic(t *testing.T) {
+	logs := captureLog(t)
+	br := &broadcaster{}
+	if !br.start(func() { panic("x") }) {
+		t.Fatal("первый запуск отклонён")
+	}
+	eventually(t, func() bool { return br.start(func() {}) })
+	if !strings.Contains(logs.String(), "bot: broadcast panic: x") {
+		t.Fatalf("в логе нет паники: %q", logs.String())
+	}
 }
 
 func TestHealthBroadcastYes_RefusedWhileBroadcastRuns(t *testing.T) {

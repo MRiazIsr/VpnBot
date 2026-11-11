@@ -12,7 +12,8 @@ import (
 )
 
 // TestMain делает настоящие перегенерации недостижимыми из любого теста пакета:
-// они пишут в /etc и запускают systemctl.
+// они пишут в /etc и запускают systemctl. Ни один тест бота не должен доходить до
+// функции пакета service, которая говорит с sing-box, telemt или systemd.
 func TestMain(m *testing.M) {
 	safe := func() error { return errors.New("apply called in a test without stubApply") }
 	applyFull, applyTelemt = safe, safe
@@ -344,4 +345,26 @@ func TestTgProxyQR_NewSecretSendsPhotoOnlyAfterReload(t *testing.T) {
 	}
 	close(release)
 	eventually(t, func() bool { return len(f.params("sendPhoto")) == 1 })
+}
+
+// Обработчики не опрашивают трафик: это делает фоновый опрос из main.go, а вызов
+// из обработчика тянет gRPC к sing-box и может запустить перегенерацию.
+func TestBotPackage_DoesNotPollTrafficInHandlers(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "UpdateTrafficViaAPI(") {
+			t.Errorf("%s вызывает UpdateTrafficViaAPI", name)
+		}
+	}
 }

@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -150,15 +151,13 @@ func clearIncidentIfAllOK() {
 }
 
 // registerHealthHandlers wires the recovery broadcast button + its confirm.
-// Called from bot.Start(). Only the admin may use them.
+// Called from registerHandlers. Only the admin may use them.
 func registerHealthHandlers(b *tele.Bot, br *broadcaster) {
 	b.Handle(&tele.Btn{Unique: "health_bcast"}, func(c tele.Context) error {
 		if c.Sender().ID != AdminID {
 			return nil
 		}
-		var n int64
-		database.DB.Model(&database.User{}).
-			Where("status = ? AND telegram_id <> 0", "active").Count(&n)
+		n := len(broadcastRecipients())
 		rm := &tele.ReplyMarkup{}
 		yes := rm.Data(fmt.Sprintf("✅ Разослать %d юзерам", n), "health_bcast_yes")
 		no := rm.Data("Отмена", "health_bcast_no")
@@ -198,7 +197,9 @@ func recoveryText() string {
 func broadcastRecovery(m messenger, ids []int64, adminID int64, text string, sleep func(time.Duration)) {
 	sent, failed := sendToAll(m, ids, text, sleep)
 	if adminID != 0 {
-		_, _ = m.Send(&tele.User{ID: adminID},
-			fmt.Sprintf("📊 Рассылка готова: отправлено %d, ошибок %d.", sent, failed))
+		if _, err := m.Send(&tele.User{ID: adminID},
+			fmt.Sprintf("📊 Рассылка готова: отправлено %d, ошибок %d.", sent, failed)); err != nil {
+			log.Printf("bot: broadcast report failed: %v", err)
+		}
 	}
 }

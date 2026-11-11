@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -54,7 +55,9 @@ func Start(token string, adminID int64) {
 // регистрации не трогает (обработчики могут, когда их вызовут).
 func registerHandlers(b *tele.Bot) {
 	// Middleware запоминается в момент Handle, поэтому Use стоит до любого Handle.
-	b.Use(middleware.Recover(), ackCallback, dropRepeats(newPressGuard(repeatWindow, time.Now)))
+	b.Use(middleware.Recover(func(err error) {
+		log.Printf("bot: handler panic: %v\n%s", err, debug.Stack())
+	}), ackCallback, dropRepeats(newPressGuard(repeatWindow, time.Now)))
 	b.Handle(tele.OnCallback, func(tele.Context) error { return nil }) // кнопки, обработчика которых уже нет
 
 	br := &broadcaster{} // одна рассылка за раз: и /broadcast, и рассылка о восстановлении
@@ -469,8 +472,10 @@ func registerHandlers(b *tele.Bot) {
 		adminID := c.Sender().ID
 		started := br.start(func() {
 			sent, failed := sendToAll(b, ids, text, time.Sleep)
-			_, _ = b.Send(&tele.User{ID: adminID},
-				fmt.Sprintf("📨 Рассылка завершена.\n✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed))
+			if _, err := b.Send(&tele.User{ID: adminID},
+				fmt.Sprintf("📨 Рассылка завершена.\n✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed)); err != nil {
+				log.Printf("bot: broadcast report failed: %v", err)
+			}
 		})
 		if !started {
 			return c.Send("⏳ Рассылка уже идёт, дождитесь отчёта.")
@@ -550,10 +555,7 @@ func sendXDNSConfig(c tele.Context, ib database.InboundConfig, user database.Use
 }
 
 func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
-	// 1. ВАЖНО: Сначала читаем статистику через API
-	service.UpdateTrafficViaAPI()
-
-	// 2. Получаем данные текущего пользователя
+	// 1. Получаем данные текущего пользователя
 	user := getUser(tgID)
 	used := formatBytes(user.TrafficUsed)
 	limit := formatBytes(user.TrafficLimit)
@@ -564,11 +566,11 @@ func getStatusMsg(tgID int64) (string, *tele.ReplyMarkup) {
 		limitStr = "∞ (Безлимит)"
 	}
 
-	// 3. Считаем ОБЩЕЕ количество пользователей
+	// 2. Считаем ОБЩЕЕ количество пользователей
 	var totalUsers int64
 	database.DB.Model(&database.User{}).Where("status = ?", "active").Count(&totalUsers)
 
-	// 4. Формируем сообщение
+	// 3. Формируем сообщение
 	msg := fmt.Sprintf(
 		"📊 **Статус сервера**\n"+
 			"👥 Активных пользователей: **%d**\n\n"+

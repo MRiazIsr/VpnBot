@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"strings"
 	"testing"
 
 	tele "gopkg.in/telebot.v3"
@@ -57,10 +58,13 @@ func TestStaleButton_StillAnswered(t *testing.T) {
 }
 
 func TestUpdateWithoutSender_DoesNotCrash(t *testing.T) {
+	logs := captureLog(t)
 	newTestDB(t)
 	f := newFakeAPI(t)
 	b := newTestBot(t, f)
 	registerHandlers(b)
 	b.ProcessUpdate(tele.Update{ID: 1, Message: &tele.Message{ID: 1, Text: "/start", Chat: &tele.Chat{ID: -100, Type: tele.ChatChannel}}})
-	// тест проходит, если процесс не упал с паникой
+	if !strings.Contains(logs.String(), "bot: handler panic") {
+		t.Fatalf("паника обработчика не попала в лог: %q", logs.String())
+	}
 }

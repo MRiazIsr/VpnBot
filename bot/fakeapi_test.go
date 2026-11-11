@@ -1,9 +1,11 @@
 package bot
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/http/httptest"
@@ -253,4 +255,32 @@ func textUpdate(sender int64, text string) tele.Update {
 		Sender: &tele.User{ID: sender},
 		Chat:   &tele.Chat{ID: sender, Type: tele.ChatPrivate},
 	}}
+}
+
+// logBuf — потокобезопасный приёмник вывода log: горутины рассылки пишут в него параллельно с тестом.
+type logBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *logBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// captureLog перенаправляет вывод log в буфер до конца теста.
+func captureLog(t *testing.T) *logBuf {
+	t.Helper()
+	lb := &logBuf{}
+	old := log.Writer()
+	log.SetOutput(lb)
+	t.Cleanup(func() { log.SetOutput(old) })
+	return lb
 }
