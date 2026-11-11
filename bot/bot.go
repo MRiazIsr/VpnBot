@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
 	tele "gopkg.in/telebot.v3"
+	"gopkg.in/telebot.v3/middleware"
 )
 
 var AdminID int64 = 0
@@ -52,6 +53,10 @@ func Start(token string, adminID int64) {
 // registerHandlers регистрирует меню и все обработчики. Сети и базы при
 // регистрации не трогает (обработчики могут, когда их вызовут).
 func registerHandlers(b *tele.Bot) {
+	// Middleware запоминается в момент Handle, поэтому Use стоит до любого Handle.
+	b.Use(middleware.Recover(), ackCallback, dropRepeats(newPressGuard(repeatWindow, time.Now)))
+	b.Handle(tele.OnCallback, func(tele.Context) error { return nil }) // кнопки, обработчика которых уже нет
+
 	registerHealthHandlers(b)
 
 	// Медленные перегенерации настроек идут в фоне, а не в обработчике нажатия.

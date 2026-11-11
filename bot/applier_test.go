@@ -39,6 +39,10 @@ func countContaining(list []string, sub string) int {
 	return n
 }
 
+// Каждый тест обязан дождаться завершения поставленных им запросов на применение до
+// возврата: рабочая горутина читает applyFull/applyTelemt лениво, а cleanup
+// возвращает настоящие функции.
+//
 // stubApply подменяет applyFull и applyTelemt счётчиками: настоящие
 // перегенерации пишут в /etc и запускают systemctl.
 func stubApply(t *testing.T) (full, telemt *atomic.Int32) {
@@ -166,21 +170,24 @@ func TestApprove_ReturnsBeforeApplyAndNotifiesAfter(t *testing.T) {
 	}
 }
 
-func TestApprove_SecondPressDoesNotDuplicate(t *testing.T) {
+func TestApprove_ImmediateSecondPressIsDropped(t *testing.T) {
 	newTestDB(t)
 	f := newFakeAPI(t)
 	b := newTestBot(t, f)
 	registerHandlers(b)
 	setAdmin(t, 1)
-	stubApply(t)
+	full, _ := stubApply(t)
 	b.ProcessUpdate(callbackUpdate(1, "approve|777"))
 	b.ProcessUpdate(callbackUpdate(1, "approve|777"))
 	// Ждём, пока отработает применение первого нажатия.
 	eventually(t, func() bool {
-		return len(f.texts(777)) == 1 && countContaining(adminEdits(f, 10), "одобрен.") == 1
+		return len(f.texts(777)) == 1 && countContaining(adminEdits(f, 10), "одобрен.") == 1 && full.Load() == 1
 	})
-	if got := countContaining(adminEdits(f, 10), "уже добавлен"); got != 1 {
-		t.Fatalf("«уже добавлен» %d раз, ждали 1", got)
+	if n := len(f.params("answerCallbackQuery")); n != 2 {
+		t.Fatalf("ответов на нажатие %d, ждали 2", n)
+	}
+	if got := countContaining(adminEdits(f, 10), "уже добавлен"); got != 0 {
+		t.Fatalf("«уже добавлен» %d раз: повтор не отброшен", got)
 	}
 	if got := len(f.texts(777)); got != 1 {
 		t.Fatalf("человеку %d сообщений, ждали 1", got)
@@ -189,6 +196,29 @@ func TestApprove_SecondPressDoesNotDuplicate(t *testing.T) {
 	database.DB.Model(&database.User{}).Where("telegram_id = ?", 777).Count(&n)
 	if n != 1 {
 		t.Fatalf("пользователей %d", n)
+	}
+}
+
+func TestApprove_AlreadyAddedUser(t *testing.T) {
+	newTestDB(t)
+	f := newFakeAPI(t)
+	b := newTestBot(t, f)
+	registerHandlers(b)
+	setAdmin(t, 1)
+	full, telemt := stubApply(t)
+	u := database.User{Username: "user_777", UUID: "u-777", TelegramID: 777, Status: "active"}
+	if err := database.DB.Create(&u).Error; err != nil {
+		t.Fatal(err)
+	}
+	b.ProcessUpdate(callbackUpdate(1, "approve|777"))
+	if got := countContaining(adminEdits(f, 10), "уже добавлен"); got != 1 {
+		t.Fatalf("«уже добавлен» %d раз, ждали 1", got)
+	}
+	if len(f.texts(777)) != 0 {
+		t.Fatal("человеку что-то отправлено")
+	}
+	if full.Load() != 0 || telemt.Load() != 0 {
+		t.Fatalf("применение запрошено: full=%d telemt=%d", full.Load(), telemt.Load())
 	}
 }
 

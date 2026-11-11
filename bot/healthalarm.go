@@ -154,7 +154,7 @@ func clearIncidentIfAllOK() {
 func registerHealthHandlers(b *tele.Bot) {
 	b.Handle(&tele.Btn{Unique: "health_bcast"}, func(c tele.Context) error {
 		if c.Sender().ID != AdminID {
-			return c.Respond()
+			return nil
 		}
 		var n int64
 		database.DB.Model(&database.User{}).
@@ -168,19 +168,19 @@ func registerHealthHandlers(b *tele.Bot) {
 
 	b.Handle(&tele.Btn{Unique: "health_bcast_no"}, func(c tele.Context) error {
 		if c.Sender().ID != AdminID {
-			return c.Respond()
+			return nil
 		}
 		return c.Edit("Рассылка отменена.")
 	})
 
 	b.Handle(&tele.Btn{Unique: "health_bcast_yes"}, func(c tele.Context) error {
 		if c.Sender().ID != AdminID {
-			return c.Respond()
+			return nil
 		}
 		// anti double-click: disable buttons immediately
 		_ = c.Edit("📢 Рассылаю…")
 		go broadcastRecovery(b)
-		return c.Respond()
+		return nil
 	})
 }
 
