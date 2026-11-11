@@ -32,8 +32,9 @@ func Start(token string, adminID int64) {
 	}
 
 	pref := tele.Settings{
-		Token:  token,
-		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+		Token:   token,
+		Poller:  newPoller(10 * time.Second),
+		OnError: onBotError,
 	}
 
 	b := connectWithRetry(func() (*tele.Bot, error) { return tele.NewBot(pref) },
