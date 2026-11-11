@@ -2,12 +2,42 @@ package bot
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 	"vpnbot/database"
 )
+
+// TestMain делает настоящие перегенерации недостижимыми из любого теста пакета:
+// они пишут в /etc и запускают systemctl.
+func TestMain(m *testing.M) {
+	safe := func() error { return errors.New("apply called in a test without stubApply") }
+	applyFull, applyTelemt = safe, safe
+	os.Exit(m.Run())
+}
+
+// adminEdits возвращает editMessageText, адресованные сообщению msgID админа.
+func adminEdits(f *fakeAPI, msgID int) (texts []string) {
+	for _, p := range f.params("editMessageText") {
+		if sameChat(p["chat_id"], 1) && fmt.Sprint(p["message_id"]) == fmt.Sprint(msgID) {
+			texts = append(texts, fmt.Sprint(p["text"]))
+		}
+	}
+	return texts
+}
+
+func countContaining(list []string, sub string) int {
+	n := 0
+	for _, s := range list {
+		if strings.Contains(s, sub) {
+			n++
+		}
+	}
+	return n
+}
 
 // stubApply подменяет applyFull и applyTelemt счётчиками: настоящие
 // перегенерации пишут в /etc и запускают systemctl.
@@ -127,7 +157,13 @@ func TestApprove_ReturnsBeforeApplyAndNotifiesAfter(t *testing.T) {
 	}
 	close(release)
 	eventually(t, func() bool { return len(f.texts(777)) == 1 })
-	eventually(t, func() bool { g := f.texts(1); return strings.Contains(g[len(g)-1], "одобрен.") })
+	eventually(t, func() bool { return countContaining(adminEdits(f, 10), "одобрен.") == 1 })
+	if n := len(f.params("sendMessage")); n != 1 { // только поздравление человеку
+		t.Fatalf("sendMessage=%d, ждали 1: итог админу должен быть правкой, а не новым сообщением", n)
+	}
+	if got := f.params("sendMessage")[0]["chat_id"]; !sameChat(got, 777) {
+		t.Fatalf("sendMessage ушёл не человеку: %v", got)
+	}
 }
 
 func TestApprove_SecondPressDoesNotDuplicate(t *testing.T) {
@@ -139,6 +175,16 @@ func TestApprove_SecondPressDoesNotDuplicate(t *testing.T) {
 	stubApply(t)
 	b.ProcessUpdate(callbackUpdate(1, "approve|777"))
 	b.ProcessUpdate(callbackUpdate(1, "approve|777"))
+	// Ждём, пока отработает применение первого нажатия.
+	eventually(t, func() bool {
+		return len(f.texts(777)) == 1 && countContaining(adminEdits(f, 10), "одобрен.") == 1
+	})
+	if got := countContaining(adminEdits(f, 10), "уже добавлен"); got != 1 {
+		t.Fatalf("«уже добавлен» %d раз, ждали 1", got)
+	}
+	if got := len(f.texts(777)); got != 1 {
+		t.Fatalf("человеку %d сообщений, ждали 1", got)
+	}
 	var n int64
 	database.DB.Model(&database.User{}).Where("telegram_id = ?", 777).Count(&n)
 	if n != 1 {
@@ -240,4 +286,32 @@ func TestTgProxy_ExistingSecretAnswersAtOnce(t *testing.T) {
 	if telemt.Load() != 0 {
 		t.Fatal("лишняя перезагрузка telemt")
 	}
+}
+
+func TestTgProxyQR_NewSecretSendsPhotoOnlyAfterReload(t *testing.T) {
+	newTestDB(t)
+	f := newFakeAPI(t)
+	b := newTestBot(t, f)
+	registerHandlers(b)
+	stubApply(t)
+	seedTelemt(t, false)
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	applyTelemt = func() error { <-release; return nil }
+
+	b.ProcessUpdate(callbackUpdate(42, "conn_tg_proxy_qr"))
+	if got := f.texts(42); len(got) != 1 || !strings.Contains(got[0], "Готовлю ссылку") {
+		t.Fatalf("got %q", got)
+	}
+	if n := len(f.params("sendPhoto")); n != 0 {
+		t.Fatalf("QR отправлен до применения настроек: %d", n)
+	}
+	close(release)
+	eventually(t, func() bool { return len(f.params("sendPhoto")) == 1 })
 }

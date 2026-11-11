@@ -334,7 +334,9 @@ func registerHandlers(b *tele.Bot) {
 		apply.request(false, func(err error) {
 			if err != nil {
 				log.Printf("bot: telemt apply failed: %v", err)
-				_, _ = b.Send(to, "❌ Не получилось подготовить ссылку. Попробуйте ещё раз через минуту.")
+				if _, e := b.Send(to, "❌ Не получилось подготовить ссылку. Попробуйте ещё раз через минуту."); e != nil {
+					log.Printf("bot: send telemt failure notice failed: %v", e)
+				}
 				return
 			}
 			if _, e := b.Send(to, telemetLinksText(links)); e != nil {
@@ -367,7 +369,9 @@ func registerHandlers(b *tele.Bot) {
 		apply.request(false, func(err error) {
 			if err != nil {
 				log.Printf("bot: telemt apply failed: %v", err)
-				_, _ = b.Send(to, "❌ Не получилось подготовить ссылку. Попробуйте ещё раз через минуту.")
+				if _, e := b.Send(to, "❌ Не получилось подготовить ссылку. Попробуйте ещё раз через минуту."); e != nil {
+					log.Printf("bot: send telemt failure notice failed: %v", e)
+				}
 				return
 			}
 			if e := sendQR(func(what interface{}, opts ...interface{}) error {
