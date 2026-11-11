@@ -57,7 +57,8 @@ func registerHandlers(b *tele.Bot) {
 	b.Use(middleware.Recover(), ackCallback, dropRepeats(newPressGuard(repeatWindow, time.Now)))
 	b.Handle(tele.OnCallback, func(tele.Context) error { return nil }) // кнопки, обработчика которых уже нет
 
-	registerHealthHandlers(b)
+	br := &broadcaster{} // одна рассылка за раз: и /broadcast, и рассылка о восстановлении
+	registerHealthHandlers(b, br)
 
 	// Медленные перегенерации настроек идут в фоне, а не в обработчике нажатия.
 	apply := newApplier(func() error { return applyFull() }, func() error { return applyTelemt() })
@@ -464,20 +465,17 @@ func registerHandlers(b *tele.Bot) {
 			return c.Send("Использование: `/broadcast <текст сообщения>`", tele.ModeMarkdown)
 		}
 
-		var users []database.User
-		database.DB.Where("telegram_id > 0").Find(&users)
-
-		sent, failed := 0, 0
-		for _, u := range users {
-			_, err := b.Send(&tele.User{ID: u.TelegramID}, text)
-			if err != nil {
-				failed++
-			} else {
-				sent++
-			}
+		ids := broadcastRecipients()
+		adminID := c.Sender().ID
+		started := br.start(func() {
+			sent, failed := sendToAll(b, ids, text, time.Sleep)
+			_, _ = b.Send(&tele.User{ID: adminID},
+				fmt.Sprintf("📨 Рассылка завершена.\n✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed))
+		})
+		if !started {
+			return c.Send("⏳ Рассылка уже идёт, дождитесь отчёта.")
 		}
-
-		return c.Send(fmt.Sprintf("📨 Рассылка завершена.\n✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed))
+		return c.Send(fmt.Sprintf("📨 Рассылка запущена, получателей: %d. Отчёт пришлю по окончании.", len(ids)))
 	})
 
 }
