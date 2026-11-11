@@ -58,6 +58,10 @@ func main() {
 		}
 	}
 
+	// Фоновый учёт трафика: Hetzner каждые 10 с, RuVDS каждые 60 с.
+	// Не зависит ни от Telegram, ни от наличия токена.
+	service.StartTrafficPolling()
+
 	if botToken != "" {
 		go bot.Start(botToken, adminID)
 	} else {

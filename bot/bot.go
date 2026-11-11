@@ -36,17 +36,22 @@ func Start(token string, adminID int64) {
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
 	}
 
-	b, err := tele.NewBot(pref)
-	if err != nil {
-		log.Fatal(err)
-		return
-	}
+	b := connectWithRetry(func() (*tele.Bot, error) { return tele.NewBot(pref) },
+		newBackoff(connectMinPause, connectMaxPause), time.Sleep)
 
 	// Сохраняем экземпляр бота в глобальную переменную
 	Bot = b
 
-	registerHealthHandlers(b)
+	registerHandlers(b)
 	go runHealthAlarm(b)
+
+	b.Start()
+}
+
+// registerHandlers регистрирует меню и все обработчики. Сети и базы при
+// регистрации не трогает (обработчики могут, когда их вызовут).
+func registerHandlers(b *tele.Bot) {
+	registerHealthHandlers(b)
 
 	// --- Menus ---
 
@@ -434,10 +439,6 @@ func Start(token string, adminID int64) {
 		return c.Send(fmt.Sprintf("📨 Рассылка завершена.\n✅ Отправлено: %d\n❌ Ошибок: %d", sent, failed))
 	})
 
-	// Фоновый учёт трафика: Hetzner каждые 10 с, RuVDS каждые 60 с.
-	service.StartTrafficPolling()
-
-	b.Start()
 }
 
 func getInboundAndUser(c tele.Context) (database.InboundConfig, database.User, error) {

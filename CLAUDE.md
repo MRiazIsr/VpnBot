@@ -33,7 +33,7 @@ VPN management system: Go backend + Telegram bot + Next.js admin panel.
 - **`api/handlers/`** — REST handlers: auth, users, inbounds CRUD, stats, public subscription endpoints (`/sub/:token` for Hetzner, `/sub-ruvds/:token` for RuVDS)
 - **`api/middleware/`** — CORS and JWT Bearer auth
 - **`api/router/`** — Route registration under `/api` with auth group
-- **`bot/`** — Telegram bot (telebot.v3) with dynamic connection buttons from DB, QR codes
+- **`bot/`** — Telegram bot (telebot.v3) with dynamic connection buttons from DB, QR codes; if Telegram is unreachable the bot does not crash the process but reconnects with a growing pause; traffic accounting starts from `main.go`
 
 ### Key data flow
 
