@@ -54,6 +54,9 @@ func Start(token string, adminID int64) {
 func registerHandlers(b *tele.Bot) {
 	registerHealthHandlers(b)
 
+	// Медленные перегенерации настроек идут в фоне, а не в обработчике нажатия.
+	apply := newApplier(func() error { return applyFull() }, func() error { return applyTelemt() })
+
 	// --- Menus ---
 
 	// Главное меню
@@ -133,6 +136,9 @@ func registerHandlers(b *tele.Bot) {
 	b.Handle(&btnRequest, handleRequest)
 
 	b.Handle(&tele.Btn{Unique: "approve"}, func(c tele.Context) error {
+		if c.Sender().ID != AdminID {
+			return nil
+		}
 		targetIDStr := c.Data()
 		targetID := parseInt(targetIDStr)
 
@@ -163,14 +169,26 @@ func registerHandlers(b *tele.Bot) {
 
 		database.DB.Create(&newUser)
 
-		service.GenerateAndReload()
-		service.SyncTelemetUsers()
-		service.GenerateAndReloadTelemet()
+		adminMsg := c.Message()
+		if err := c.Edit(fmt.Sprintf("⏳ Пользователь %s (%s) добавлен, применяю настройки…", vlessUsername, tgUsername)); err != nil {
+			log.Printf("bot: approve edit failed: %v", err)
+		}
 
-		userChat := &tele.User{ID: targetID}
-		b.Send(userChat, "🎉 **Поздравляем! Ваш доступ одобрен.**\n\nТеперь вы можете пользоваться VPN. Нажмите кнопку ниже, чтобы подключиться.", menu)
-
-		return c.Edit(fmt.Sprintf("✅ Пользователь %s (%s) одобрен.", vlessUsername, tgUsername))
+		apply.request(true, func(err error) {
+			if err != nil {
+				if _, e := b.Edit(adminMsg, fmt.Sprintf("⚠️ Пользователь %s (%s) добавлен, но настройки не применились: %v\nПовторите перезагрузку настроек из панели.", vlessUsername, tgUsername, err)); e != nil {
+					log.Printf("bot: approve report failed: %v", e)
+				}
+				return
+			}
+			if _, e := b.Send(&tele.User{ID: targetID}, "🎉 **Поздравляем! Ваш доступ одобрен.**\n\nТеперь вы можете пользоваться VPN. Нажмите кнопку ниже, чтобы подключиться.", menu); e != nil {
+				log.Printf("bot: approve notify user failed: %v", e)
+			}
+			if _, e := b.Edit(adminMsg, fmt.Sprintf("✅ Пользователь %s (%s) одобрен.", vlessUsername, tgUsername)); e != nil {
+				log.Printf("bot: approve report failed: %v", e)
+			}
+		})
+		return nil
 	})
 
 	b.Handle(&btnConnect, func(c tele.Context) error {
@@ -302,51 +320,64 @@ func registerHandlers(b *tele.Bot) {
 
 	// Обработчик кнопки Telegram Proxy — ссылка
 	b.Handle(&tele.Btn{Unique: "conn_tg_proxy"}, func(c tele.Context) error {
-		links, err := getTelemetLinks(c)
+		links, created, err := telemetLinksFor(c.Sender().ID)
 		if err != nil {
 			return c.Send(err.Error())
 		}
-
-		// Порядок не косметический: первой идёт та, что реально проходит у
-		// мобильных операторов. Прежняя основная остаётся ниже — у части
-		// пользователей она работает, и ломать им ничего не нужно.
-		primary, rest := links.FakeTLS, []string{}
-		if links.OwnCert != "" {
-			primary = links.OwnCert
-			rest = append(rest, links.FakeTLS)
+		if !created {
+			return c.Send(telemetLinksText(links))
 		}
-		rest = append(rest, links.Secure, links.Classic)
-
-		msg := "📡 Основная ссылка:\n\n" + primary
-		n := 0
-		for _, link := range rest {
-			if link == "" {
-				continue
-			}
-			if n == 0 {
-				msg += "\n\nЕсли основная не подключается — попробуйте запасные, " +
-					"они ходят другим способом. Аккаунт и лимиты те же."
-			}
-			n++
-			msg += fmt.Sprintf("\n\n📡 Запасная %d:\n\n%s", n, link)
+		if err := c.Send("⏳ Готовлю ссылку, это займёт несколько секунд…"); err != nil {
+			log.Printf("bot: send failed: %v", err)
 		}
-		return c.Send(msg)
+		to := c.Sender()
+		apply.request(false, func(err error) {
+			if err != nil {
+				log.Printf("bot: telemt apply failed: %v", err)
+				_, _ = b.Send(to, "❌ Не получилось подготовить ссылку. Попробуйте ещё раз через минуту.")
+				return
+			}
+			if _, e := b.Send(to, telemetLinksText(links)); e != nil {
+				log.Printf("bot: send telemt links failed: %v", e)
+			}
+		})
+		return nil
 	})
 
 	// Обработчик кнопки Telegram Proxy — QR-код
 	b.Handle(&tele.Btn{Unique: "conn_tg_proxy_qr"}, func(c tele.Context) error {
-		link, err := getTelemetLink(c)
+		links, created, err := telemetLinksFor(c.Sender().ID)
 		if err != nil {
 			return c.Send(err.Error())
 		}
-
-		qr, qrErr := qrcode.Encode(link, qrcode.Medium, 256)
-		if qrErr != nil {
-			return c.Send("❌ Ошибка генерации QR кода.")
+		sendQR := func(send func(what interface{}, opts ...interface{}) error) error {
+			qr, qrErr := qrcode.Encode(links.FakeTLS, qrcode.Medium, 256)
+			if qrErr != nil {
+				return send("❌ Ошибка генерации QR кода.")
+			}
+			return send(&tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "Telegram Proxy — сканируйте камерой Telegram"})
 		}
-
-		photo := &tele.Photo{File: tele.FromReader(bytes.NewReader(qr)), Caption: "Telegram Proxy — сканируйте камерой Telegram"}
-		return c.Send(photo)
+		if !created {
+			return sendQR(c.Send)
+		}
+		if err := c.Send("⏳ Готовлю ссылку, это займёт несколько секунд…"); err != nil {
+			log.Printf("bot: send failed: %v", err)
+		}
+		to := c.Sender()
+		apply.request(false, func(err error) {
+			if err != nil {
+				log.Printf("bot: telemt apply failed: %v", err)
+				_, _ = b.Send(to, "❌ Не получилось подготовить ссылку. Попробуйте ещё раз через минуту.")
+				return
+			}
+			if e := sendQR(func(what interface{}, opts ...interface{}) error {
+				_, e := b.Send(to, what, opts...)
+				return e
+			}); e != nil {
+				log.Printf("bot: send telemt QR failed: %v", e)
+			}
+		})
+		return nil
 	})
 
 	b.Handle(&tele.Btn{Unique: "conn_file"}, func(c tele.Context) error {
@@ -591,25 +622,48 @@ type telemetLinks struct {
 	Classic string // <secret> — голый MTProto, пусто если режим выключен
 }
 
-// getTelemetLink возвращает основную (FakeTLS) ссылку — для QR-кода.
-func getTelemetLink(c tele.Context) (string, error) {
-	links, err := getTelemetLinks(c)
-	return links.FakeTLS, err
+// telemetLinksText собирает текст со ссылками tg://proxy для сообщения.
+func telemetLinksText(links telemetLinks) string {
+	// Порядок не косметический: первой идёт та, что реально проходит у
+	// мобильных операторов. Прежняя основная остаётся ниже — у части
+	// пользователей она работает, и ломать им ничего не нужно.
+	primary, rest := links.FakeTLS, []string{}
+	if links.OwnCert != "" {
+		primary = links.OwnCert
+		rest = append(rest, links.FakeTLS)
+	}
+	rest = append(rest, links.Secure, links.Classic)
+
+	msg := "📡 Основная ссылка:\n\n" + primary
+	n := 0
+	for _, link := range rest {
+		if link == "" {
+			continue
+		}
+		if n == 0 {
+			msg += "\n\nЕсли основная не подключается — попробуйте запасные, " +
+				"они ходят другим способом. Аккаунт и лимиты те же."
+		}
+		n++
+		msg += fmt.Sprintf("\n\n📡 Запасная %d:\n\n%s", n, link)
+	}
+	return msg
 }
 
-// getTelemetLinks возвращает ссылки tg://proxy для текущего юзера во всех
-// включённых режимах.
-func getTelemetLinks(c tele.Context) (telemetLinks, error) {
+// telemetLinksFor возвращает ссылки tg://proxy для пользователя во всех
+// включённых режимах. created — секрет создан только что: конфиг telemt ещё
+// не перегенерирован, перегенерацию должен запросить вызывающий.
+func telemetLinksFor(telegramID int64) (links telemetLinks, created bool, err error) {
 	var out telemetLinks
 
 	var user database.User
-	if err := database.DB.Where("telegram_id = ?", c.Sender().ID).First(&user).Error; err != nil {
-		return out, fmt.Errorf("❌ Пользователь не найден.")
+	if err := database.DB.Where("telegram_id = ?", telegramID).First(&user).Error; err != nil {
+		return out, false, fmt.Errorf("❌ Пользователь не найден.")
 	}
 
 	var cfg database.TelemetConfig
 	if err := database.DB.First(&cfg).Error; err != nil || !cfg.Enabled {
-		return out, fmt.Errorf("❌ Telegram Proxy не настроен.")
+		return out, false, fmt.Errorf("❌ Telegram Proxy не настроен.")
 	}
 
 	// Ищем или создаём TelemetUser (атомарно через FirstOrCreate)
@@ -621,12 +675,9 @@ func getTelemetLinks(c tele.Context) (telemetLinks, error) {
 		}).
 		FirstOrCreate(&tu)
 	if result.Error != nil {
-		return out, fmt.Errorf("❌ Ошибка создания секрета прокси.")
+		return out, false, fmt.Errorf("❌ Ошибка создания секрета прокси.")
 	}
-	if result.RowsAffected > 0 {
-		// Новый секрет создан — перегенерируем конфиг telemt
-		service.GenerateAndReloadTelemet()
-	}
+	created = result.RowsAffected > 0
 
 	serverAddr := cfg.ServerAddress
 	if serverAddr == "" {
@@ -663,7 +714,7 @@ func getTelemetLinks(c tele.Context) (telemetLinks, error) {
 	if cfg.ClassicEnabled {
 		out.Classic = service.GenerateTelemetClassicLink(serverAddr, altPort, tu.Secret)
 	}
-	return out, nil
+	return out, created, nil
 }
 
 func formatBytes(b int64) string {
